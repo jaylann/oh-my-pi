@@ -60,6 +60,7 @@ export type {
 	StructuredSubagentSchemaSource,
 	StructuredSubagentValidationStatus,
 	StructuredSubagentOutput,
+	TaskAgentSpec,
 	TaskItem,
 	TaskParams,
 	ReviewFinding,

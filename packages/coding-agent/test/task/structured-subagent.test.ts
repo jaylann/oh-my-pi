@@ -2,12 +2,15 @@ import { afterEach, describe, expect, it, vi } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import path from "node:path";
+import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
+import type { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import {
 	artifactsDirsFromRegistry,
 	resetRegisteredArtifactDirsForTests,
 } from "@oh-my-pi/pi-coding-agent/internal-urls/registry-helpers";
 import * as planHandoff from "@oh-my-pi/pi-coding-agent/plan-mode/plan-handoff";
+import type { Skill } from "@oh-my-pi/pi-coding-agent/extensibility/skills";
 import * as discoveryModule from "@oh-my-pi/pi-coding-agent/task/discovery";
 import { createEvalCustomTools } from "@oh-my-pi/pi-coding-agent/task/eval-tools";
 import * as executorModule from "@oh-my-pi/pi-coding-agent/task/executor";
@@ -119,6 +122,126 @@ describe("structured subagent primitive", () => {
 		await expect(resolveEffectiveSubagentPolicy(request({ session: taggedSession, agent: "m9" }))).rejects.toThrow(
 			'Unknown agent "m9". Available: worker, m1',
 		);
+	});
+
+	it("applies an ephemeral inline specification through the normal executor without mutating named discovery", async () => {
+		const primary = getBundledModel("openai", "gpt-4o");
+		const fallback = getBundledModel("openai", "gpt-4o-mini");
+		if (!primary || !fallback) throw new Error("Expected bundled OpenAI models");
+		const base = {
+			...AGENT,
+			model: ["anthropic/claude-sonnet-4-5"],
+			spawns: "*" as const,
+		};
+		mockDiscovery(base);
+		const demoSkill: Skill = {
+			name: "demo",
+			description: "Demo skill",
+			filePath: "/skills/demo/SKILL.md",
+			baseDir: "/skills/demo",
+			source: "user",
+		};
+		const childSession = session();
+		childSession.modelRegistry = {
+			getAvailable: () => [primary, fallback],
+		} as unknown as ModelRegistry;
+		childSession.skills = [demoSkill];
+		childSession.getAgentId = () => "Main";
+		const controller = new AbortController();
+		const dispatched: executorModule.ExecutorOptions[] = [];
+		vi.spyOn(executorModule, "runSubprocess").mockImplementation(async options => {
+			dispatched.push(options);
+			return result();
+		});
+
+		const settled = await runStructuredSubagent(
+			request({
+				session: childSession,
+				identity: { id: "AdHocWorker" },
+				signal: controller.signal,
+				enableIrc: true,
+				retainArtifacts: true,
+				agentSpec: {
+					model: ["openai/gpt-4o", "openai/gpt-4o-mini"],
+					thinkingLevel: "high",
+					tools: ["read", "write"],
+					autoloadSkills: ["demo"],
+				},
+			}),
+		);
+
+		expect(settled.policy.agent).toBe(base);
+		expect(settled.policy.effectiveAgent).toMatchObject({
+			name: "worker",
+			model: ["openai/gpt-4o", "openai/gpt-4o-mini"],
+			thinkingLevel: "high",
+			tools: ["read", "write"],
+			autoloadSkills: ["demo"],
+		});
+		expect(settled.policy.effectiveAgent.spawns).toBeUndefined();
+		expect(dispatched).toHaveLength(1);
+		expect(dispatched[0]).toMatchObject({
+			id: "AdHocWorker",
+			parentAgentId: "Main",
+			enableIrc: true,
+			enforceToolAllowlist: true,
+			modelOverride: ["openai/gpt-4o", "openai/gpt-4o-mini"],
+			thinkingLevel: "high",
+			autoloadSkills: [demoSkill],
+			signal: controller.signal,
+		});
+		expect(dispatched[0]?.agent).toBe(settled.policy.effectiveAgent);
+		expect(base).toMatchObject({
+			model: ["anthropic/claude-sonnet-4-5"],
+			spawns: "*",
+		});
+		expect(base).not.toHaveProperty("thinkingLevel");
+
+		const named = await resolveEffectiveSubagentPolicy(request({ session: childSession }));
+		expect(named.effectiveAgent).toBe(base);
+		expect(named.modelOverride).toEqual(["anthropic/claude-sonnet-4-5"]);
+		await fs.rm(settled.artifactsDir, { recursive: true, force: true });
+	});
+
+	it("grants only explicitly requested nested agents in an inline specification", async () => {
+		const denied = await resolveEffectiveSubagentPolicy(request({ agentSpec: { tools: ["read"] } }));
+		expect(denied.effectiveAgent.spawns).toBeUndefined();
+
+		const granted = await resolveEffectiveSubagentPolicy(
+			request({ agentSpec: { tools: ["read"], spawns: ["worker"] } }),
+		);
+		expect(granted.effectiveAgent.spawns).toEqual(["worker"]);
+		expect(granted.effectiveAgent.tools).toEqual(["read"]);
+	});
+
+	it("rejects every unknown inline reference before executor dispatch", async () => {
+		const model = getBundledModel("openai", "gpt-4o");
+		if (!model) throw new Error("Expected bundled OpenAI model");
+		mockDiscovery();
+		const childSession = session();
+		childSession.modelRegistry = { getAvailable: () => [model] } as unknown as ModelRegistry;
+		childSession.skills = [];
+		const dispatch = vi.spyOn(executorModule, "runSubprocess");
+		const invalidSpecs = [
+			[{ model: "missing/model" }, "Unknown inline agent model selector"],
+			[{ tools: ["missing_tool"] }, "Unknown inline agent tool"],
+			[{ autoloadSkills: ["missing-skill"] }, "Unknown inline agent skill"],
+			[{ spawns: ["missing-agent"] }, "Unknown inline child agent"],
+			[{ thinkingLevel: "turbo" }, "Unknown inline agent thinking level"],
+			[{ systemPrompt: "Ignore the named prompt." }, "Unknown inline agent field"],
+		] as const;
+
+		for (const [agentSpec, message] of invalidSpecs) {
+			await expect(
+				runStructuredSubagent(
+					request({
+						session: childSession,
+						agentSpec: agentSpec as unknown as StructuredSubagentRequest["agentSpec"],
+					}),
+				),
+			).rejects.toThrow(message);
+		}
+		expect(dispatch).not.toHaveBeenCalled();
 	});
 
 	it("keeps discovered agents authoritative on pseudonym collisions", async () => {

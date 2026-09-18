@@ -74,6 +74,12 @@ function getBatchItemProperties(tool: TaskTool): Record<string, unknown> {
 	return tasks.items.properties;
 }
 
+function getAgentSpecProperties(container: Record<string, unknown>): Record<string, unknown> {
+	const agentSpec = container.agentSpec;
+	if (!isRecord(agentSpec) || !isRecord(agentSpec.properties)) return {};
+	return agentSpec.properties;
+}
+
 function getFirstText(result: { content: Array<{ type: string; text?: string }> }): string {
 	const content = result.content.find(part => part.type === "text");
 	return content?.type === "text" ? (content.text ?? "") : "";
@@ -118,8 +124,16 @@ describe("task.batch schema gating", () => {
 		expect(offProperties.context).toBeUndefined();
 		expect(offProperties.task).toBeDefined();
 		expect(offProperties.name).toBeDefined();
+		expect(offProperties.agentSpec).toBeDefined();
 		expect(offProperties.outputSchema).toBeDefined();
 		expect(typeof offProperties.outputSchema).toBe("object");
+		expect(Object.keys(getAgentSpecProperties(offProperties)).sort()).toEqual([
+			"autoloadSkills",
+			"model",
+			"spawns",
+			"thinkingLevel",
+			"tools",
+		]);
 		expect(offProperties.schemaMode).toBeDefined();
 
 		const on = await TaskTool.create(createSession({ settings: { "task.batch": true } }));
@@ -137,7 +151,15 @@ describe("task.batch schema gating", () => {
 		expect(itemProperties.task).toBeDefined();
 		expect(itemProperties.name).toBeDefined();
 		expect(itemProperties.agent).toBeDefined();
+		expect(itemProperties.agentSpec).toBeDefined();
 		expect(itemProperties.outputSchema).toBeDefined();
+		expect(Object.keys(getAgentSpecProperties(itemProperties)).sort()).toEqual([
+			"autoloadSkills",
+			"model",
+			"spawns",
+			"thinkingLevel",
+			"tools",
+		]);
 		expect(typeof itemProperties.outputSchema).toBe("object");
 		expect(itemProperties.schemaMode).toBeDefined();
 	});
@@ -496,6 +518,50 @@ describe("task.batch spawning", () => {
 		expect(reviewerSpawn?.outputSchema).toBe(callerSchema);
 		expect(reviewerSpawn?.outputSchemaSource).toBe("caller");
 		expect(reviewerSpawn?.outputSchemaOverridesAgent).toBe(true);
+	});
+
+	it("forwards an item agentSpec while retaining normal async identity and IRC", async () => {
+		mockDiscovery(taskAgent);
+		let spawnedAgent: AgentDefinition | undefined;
+		let ircEnabled: boolean | undefined;
+		let parentAgentId: string | undefined;
+		vi.spyOn(executorModule, "runSubprocess").mockImplementation(async options => {
+			spawnedAgent = options.agent;
+			ircEnabled = options.enableIrc;
+			parentAgentId = options.parentAgentId;
+			return makeResult(options.id ?? "?");
+		});
+
+		const manager = createManager();
+		const tool = await TaskTool.create(
+			createSession({ manager, settings: { "async.enabled": true, "task.batch": true } }),
+		);
+		const result = await tool.execute("tc-inline-agent", {
+			context: "Shared notes.",
+			tasks: [
+				{
+					name: "AdHoc",
+					task: "Do the thing.",
+					agentSpec: { thinkingLevel: "high", tools: ["read", "write"], spawns: [] },
+				},
+			],
+		} as TaskParams);
+
+		expect(getFirstText(result)).toContain("Spawned agent `AdHoc`");
+		expect(result.details?.progress?.map(progress => progress.id)).toEqual(["AdHoc"]);
+		expect(result.details?.async).toMatchObject({ state: "running", type: "task" });
+		await manager.getJob(result.details!.async!.jobId)!.promise;
+		expect(spawnedAgent).toMatchObject({
+			name: "task",
+			thinkingLevel: "high",
+			tools: ["read", "write"],
+			spawns: [],
+		});
+		expect(spawnedAgent).not.toBe(taskAgent);
+		expect(ircEnabled).toBe(true);
+		expect(parentAgentId).toBe("Main");
+		expect(taskAgent).not.toHaveProperty("thinkingLevel");
+		expect(taskAgent).not.toHaveProperty("tools");
 	});
 
 	it("treats a one-item batch as a single spawn and forwards context", async () => {

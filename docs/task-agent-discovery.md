@@ -47,6 +47,42 @@ Parsing comes from frontmatter via `parseAgentFields()` (`src/discovery/helpers.
 - `prewalk: true` starts the subagent on its resolved model and hands off to the default prewalk target (the `smol` role) at its first edit/write, exactly like the session-level `--prewalk`; a string value (e.g. `prewalk: "@smol"` or `prewalk: "openai/gpt-5-mini"`) picks a custom target. The `task.agentPrewalk` settings record (agent name → `"on"` / `"off"` / pattern, configured per agent from the `/agents` hub via its prewalk strip) overrides the frontmatter. Resolution happens in `runSubprocess` (`src/task/executor.ts`). An unavailable target is skipped instead of failing the spawn. A resolved target is skipped only when both its model identity and its effective thinking mode/level match the starting selection after model clamping; a same-model effort downgrade is a real hand-off and still arms and switches at the first edit/write.
 - `advisor: true` pairs spawned sessions of the agent with an advisor running the model resolved for the `advisor` role; a string value (e.g. `advisor: "deepseek/deepseek-v4-flash"` or `advisor: "@smol:high"`) sets an explicit advisor model pattern (optional `:level` suffix), applied as the spawned session's `modelRoles.advisor`. The `task.agentAdvisor` settings record (agent name → `"on"` / `"off"` / pattern, configured per agent from the `/agents` hub via its advisor strip) overrides the frontmatter. Resolution happens in `runSubprocess` (`src/task/executor.ts`); subagents default to no advisor, and the effective opt-in is persisted in `session_init` so cold revival restores it.
 
+## Ephemeral ad-hoc agent specifications
+
+Task items may add `agentSpec` while retaining the selected named agent's prompt, output contract, blocking behavior, and identity. The specification is resolved only for that spawn; it is not added to discovery, written to an agent file, or registered as a reusable agent type.
+
+Supported overrides:
+
+- `model`: one model selector or an ordered selector/fallback array
+- `thinkingLevel`: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, or `auto`
+- `tools`: a built-in, extension, or MCP tool allowlist
+- `spawns`: an explicit child-agent allowlist or `"*"`
+- `autoloadSkills`: names of skills already discovered in the parent session
+
+Omitting `spawns` denies nested delegation even when the named base agent normally permits it. The resolver validates every supplied model selector, tool, child-agent name, skill, and thinking level before allocating artifacts or dispatching the existing executor. Unknown references fail the whole spawn with the available values where useful. No system-prompt override exists: `agent` still selects the reusable prompt and the task item's `name` and `task` remain its runtime identity and assignment.
+
+Example:
+
+```json
+{
+  "context": "Inspect the requested subsystem.",
+  "tasks": [
+    {
+      "name": "FocusedReview",
+      "agent": "reviewer",
+      "agentSpec": {
+        "model": ["openai/gpt-5.4:high", "@review"],
+        "thinkingLevel": "high",
+        "tools": ["read", "grep", "lsp"],
+        "spawns": [],
+        "autoloadSkills": ["swift"]
+      },
+      "task": "Review the concurrency boundary and return findings."
+    }
+  ]
+}
+```
+
 ## Role-backed custom agents
 
 OMP discovers user agents from `~/.omp/agent/agents/*.md` and project agents from `.omp/agents/*.md`.
@@ -213,11 +249,12 @@ A missing name fails preflight with `Unknown agent "...". Available: ...`; no su
 
 For task dispatch, model precedence is:
 
-1. `task.agentModelOverrides[agentName]`
-2. the agent frontmatter's prioritized `model` list
-3. the parent's active model, then its configured/default model fallback
+1. the task item's inline `agentSpec.model`
+2. `task.agentModelOverrides[agentName]`
+3. the named agent's prioritized `model` list
+4. the parent's active model, then its configured/default model fallback
 
-Role aliases in either of the first two sources are expanded through `modelRoles`. The shared eval bridge can also supply an invocation-local model override ahead of the settings override; the task wire schema does not expose that field.
+Role aliases in any of the first three sources are expanded through `modelRoles`. The shared eval bridge can also supply an invocation-local model override ahead of these task sources.
 
 Service-tier precedence is independent of model selection: an exact, case-sensitive
 `task.agentServiceTierOverrides[agentName]` entry overrides `tier.subagent`; an absent entry preserves

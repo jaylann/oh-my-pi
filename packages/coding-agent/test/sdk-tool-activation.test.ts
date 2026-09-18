@@ -193,6 +193,27 @@ describe("createAgentSession defaultInactive tool activation", () => {
 		}
 	});
 
+	it("keeps discovered tools registered but activates only an enforced allowlist", async () => {
+		const tempDir = makeTempDir();
+		const { session } = await createAgentSession({
+			...baseOptions(tempDir),
+			toolNames: ["read", "default_inactive_tool"],
+			enforceToolAllowlist: true,
+			extensions: [toolActivationExtension],
+		});
+
+		try {
+			expect(session.getAllToolNames()).toEqual(
+				expect.arrayContaining(["default_active_tool", "default_inactive_tool"]),
+			);
+			expect(session.getEnabledToolNames()).toContain("default_inactive_tool");
+			expect(session.getEnabledToolNames()).not.toContain("default_active_tool");
+			expect(session.getMountedXdevToolNames()).not.toContain("default_active_tool");
+		} finally {
+			await session.dispose();
+		}
+	});
+
 	it("preserves a deferrable-only write transport across enabled-set reapplication", async () => {
 		const tempDir = makeTempDir();
 		const { session } = await createAgentSession({
