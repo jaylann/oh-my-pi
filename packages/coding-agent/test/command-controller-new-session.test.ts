@@ -13,6 +13,7 @@ interface NewSessionHarness {
 	counts: {
 		newSession: () => number;
 		unfocusSession: () => number;
+		resetPlanMode: () => number;
 		resetTranscriptAnchors: () => number;
 		resetTranscript: () => number;
 		presented: () => number;
@@ -20,10 +21,11 @@ interface NewSessionHarness {
 	setFocused: (id: string | undefined) => void;
 }
 
-function makeHarness(): NewSessionHarness {
+function makeHarness(newSessionResult = true): NewSessionHarness {
 	let newSession = 0;
 	let unfocusSession = 0;
 	let resetTranscriptAnchors = 0;
+	let resetPlanMode = 0;
 	let resetTranscript = 0;
 	let presented = 0;
 	let focusedAgentId: string | undefined = "subagent-1";
@@ -33,7 +35,7 @@ function makeHarness(): NewSessionHarness {
 			isCompacting: false,
 			newSession: async () => {
 				newSession++;
-				return true;
+				return newSessionResult;
 			},
 		},
 		sessionManager: {
@@ -46,6 +48,9 @@ function makeHarness(): NewSessionHarness {
 		unfocusSession: async () => {
 			unfocusSession++;
 			focusedAgentId = undefined;
+		},
+		resetPlanModeAfterNewSession: async () => {
+			resetPlanMode++;
 		},
 		eventController: {
 			resetTranscriptAnchors: () => {
@@ -76,6 +81,7 @@ function makeHarness(): NewSessionHarness {
 			newSession: () => newSession,
 			unfocusSession: () => unfocusSession,
 			resetTranscriptAnchors: () => resetTranscriptAnchors,
+			resetPlanMode: () => resetPlanMode,
 			resetTranscript: () => resetTranscript,
 			presented: () => presented,
 		},
@@ -92,6 +98,7 @@ describe("CommandController new-session teardown", () => {
 		await harness.controller.handleClearCommand();
 
 		expect(harness.counts.newSession()).toBe(1);
+		expect(harness.counts.resetPlanMode()).toBe(1);
 		expect(harness.counts.unfocusSession()).toBe(1);
 		expect(harness.ctx.focusedAgentId).toBeUndefined();
 		expect(harness.counts.resetTranscriptAnchors()).toBe(1);
@@ -106,8 +113,20 @@ describe("CommandController new-session teardown", () => {
 		await harness.controller.handleClearCommand();
 
 		expect(harness.counts.newSession()).toBe(1);
+		expect(harness.counts.resetPlanMode()).toBe(1);
 		expect(harness.counts.unfocusSession()).toBe(0);
 		expect(harness.counts.resetTranscriptAnchors()).toBe(1);
 		expect(harness.counts.resetTranscript()).toBe(1);
+	});
+
+	it("does not reconcile plan mode when a new-session hook cancels", async () => {
+		const harness = makeHarness(false);
+
+		await harness.controller.handleClearCommand();
+
+		expect(harness.counts.newSession()).toBe(1);
+		expect(harness.counts.resetPlanMode()).toBe(0);
+		expect(harness.counts.resetTranscript()).toBe(0);
+		expect(harness.counts.presented()).toBe(0);
 	});
 });

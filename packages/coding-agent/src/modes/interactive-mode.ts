@@ -3714,10 +3714,33 @@ export class InteractiveMode implements InteractiveModeContext {
 		}
 	}
 
+	async resetPlanModeAfterNewSession(): Promise<void> {
+		if (this.planModeEnabled) {
+			await this.#tearDownPlanMode({ silent: true, appendModeChange: false });
+		} else if (this.planModePaused) {
+			this.session.setPlanModeState(undefined);
+			this.session.setPlanProposalHandler?.(null);
+			this.planModeEnabled = false;
+			this.planModePaused = false;
+			this.planModePlanFilePath = undefined;
+			this.#planModePreviousToolPresentation = undefined;
+			this.#planModePreviousModelState = undefined;
+			this.#pendingModelSwitch = undefined;
+			this.#pendingPlanModelSwitch = false;
+			this.#planModeHasEntered = false;
+			this.#updatePlanModeStatus();
+		}
+		this.#planModeHasEntered = false;
+		if (shouldEnterPlanModeOnStartup(this.sessionManager, this.session.settings)) {
+			await this.#enterPlanMode({ silent: true });
+		}
+	}
+
 	async #enterPlanMode(options?: {
 		planFilePath?: string;
 		workflow?: "parallel" | "iterative";
 		preserveRestoredModel?: boolean;
+		silent?: boolean;
 	}): Promise<void> {
 		if (this.planModeEnabled) {
 			return;
@@ -3792,7 +3815,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		}
 		this.#updatePlanModeStatus();
 		this.sessionManager.appendModeChange("plan", { planFilePath });
-		this.showStatus(`Plan mode enabled. Plan file: ${planFilePath}`);
+		if (!options?.silent) this.showStatus(`Plan mode enabled. Plan file: ${planFilePath}`);
 	}
 
 	async #restorePlanPreviousModel(prev: { model: Model; thinkingLevel?: ConfiguredThinkingLevel }): Promise<void> {
@@ -3856,6 +3879,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		silent?: boolean;
 		paused?: boolean;
 		deferModelRestore?: boolean;
+		appendModeChange?: boolean;
 	}): Promise<void> {
 		const planModeState = this.session.getPlanModeState();
 		const planModeTools = this.session.getEnabledToolNames();
@@ -3923,7 +3947,9 @@ export class InteractiveMode implements InteractiveModeContext {
 		if (!options?.deferModelRestore) this.#planModePreviousModelState = undefined;
 		this.#updatePlanModeStatus();
 		const paused = options?.paused ?? false;
-		this.sessionManager.appendModeChange(paused ? "plan_paused" : "none");
+		if (options?.appendModeChange !== false) {
+			this.sessionManager.appendModeChange(paused ? "plan_paused" : "none");
+		}
 		if (!options?.silent) {
 			this.showStatus(paused ? "Plan mode paused." : "Plan mode disabled.");
 		}

@@ -30,6 +30,14 @@ describe("plan-mode re-entry prompt", () => {
 });
 
 describe("plan-mode-active tool availability", () => {
+	it("pre-authorizes read-only discovery without permission requests", () => {
+		const rendered = render();
+
+		expect(rendered).toContain("Read-only inspection is pre-authorized");
+		expect(rendered).toContain("without asking the user or requesting approval");
+		expect(rendered).toContain("non-mutating shell commands");
+	});
+
 	it("omits ask-tool directives when ask is unavailable", () => {
 		const withoutAsk = render({ askAvailable: false, iterative: true });
 		expect(withoutAsk).not.toContain("`ask`: 2–4 mutually exclusive options");

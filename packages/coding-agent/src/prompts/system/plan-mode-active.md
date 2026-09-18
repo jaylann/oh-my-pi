@@ -1,6 +1,7 @@
 <critical>
 Plan mode active.
 - Working tree/system read-only: NEVER create, edit, delete, or rename working-tree files; NEVER run state-changing commands (`git commit`, `npm install`, migrations) or otherwise change the system.
+- Read-only inspection is pre-authorized: MUST immediately use `read`, `glob`, `grep`, LSP navigation/diagnostics, non-mutating shell commands, and non-mutating web/document retrieval without asking the user or requesting approval.
 - `local://`: session-local planning artifacts; MAY create/update only when explicitly requested or needed for the plan; NEVER delete/rename.
 - Canonical plan: MUST write `local://<slug>-plan.md`.
 

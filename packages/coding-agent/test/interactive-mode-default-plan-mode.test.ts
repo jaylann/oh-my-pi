@@ -168,6 +168,52 @@ describe("InteractiveMode plan.defaultOnStartup", () => {
 		expect(session?.getActiveToolNames()).toContain("read");
 	});
 
+	it("resets plan mode across /new and renders the next manual entry", async () => {
+		const writeTool = makeTool("write");
+		const settings = Settings.isolated({ "plan.defaultOnStartup": false, "compaction.enabled": false });
+		settings.setModelRole("plan", "anthropic/claude-haiku-4-5:high");
+		const created = createHarness(settings, {
+			extraRegistryTools: [writeTool],
+			builtInToolNames: ["read", "write"],
+		});
+		const initialModel = session?.model;
+		const setPlanModeStatus = vi.spyOn(created.statusLine, "setPlanModeStatus");
+		await created.init({ suppressWelcomeIntro: true });
+
+		await created.handlePlanModeCommand();
+		expect(created.planModeEnabled).toBe(true);
+		expect(session?.getActiveToolNames()).toContain("write");
+
+		await created.handleClearCommand();
+		expect(created.planModeEnabled).toBe(false);
+		expect(created.planModePaused).toBe(false);
+		expect(session?.getPlanModeState()).toBeUndefined();
+		expect(session?.peekPlanProposalHandler()).toBeUndefined();
+		expect(session?.model?.id).toBe(initialModel?.id);
+		expect(session?.getActiveToolNames()).toEqual(["read"]);
+		expect(setPlanModeStatus).toHaveBeenLastCalledWith(undefined);
+
+		await created.handlePlanModeCommand();
+		expect(created.planModeEnabled).toBe(true);
+		expect(setPlanModeStatus).toHaveBeenLastCalledWith({ enabled: true, paused: false });
+	});
+
+	it("re-enters plan mode after /new when it is the startup default", async () => {
+		const created = createHarness(Settings.isolated({ "plan.defaultOnStartup": true, "compaction.enabled": false }));
+		await created.init({ suppressWelcomeIntro: true });
+		const setPlanModeStatus = vi.spyOn(created.statusLine, "setPlanModeStatus");
+		const showStatus = vi.spyOn(created, "showStatus");
+		showStatus.mockClear();
+
+		await created.handleClearCommand();
+
+		expect(created.planModeEnabled).toBe(true);
+		expect(created.planModePaused).toBe(false);
+		expect(session?.getPlanModeState()).toMatchObject({ enabled: true, planFilePath: "local://PLAN.md" });
+		expect(setPlanModeStatus).toHaveBeenLastCalledWith({ enabled: true, paused: false });
+		expect(showStatus).not.toHaveBeenCalledWith("Plan mode enabled. Plan file: local://PLAN.md");
+	});
+
 	it("keeps the welcome banner synchronized across startup and later model switches", async () => {
 		Settings.instance.set("startup.quiet", false);
 		const settings = Settings.isolated({ "plan.defaultOnStartup": true, "compaction.enabled": false });
