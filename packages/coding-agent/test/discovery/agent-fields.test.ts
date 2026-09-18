@@ -130,6 +130,23 @@ describe("parseAgentFields", () => {
 		expect(fields?.autoloadSkills).toEqual(["user-created-skill-a", "user-created-skill-b"]);
 	});
 
+	test("parses mcpServers from CSV and array frontmatter", () => {
+		expect(
+			parseAgentFields({
+				name: "mcp-csv",
+				description: "desc",
+				mcpServers: "github, linear",
+			})?.mcpServers,
+		).toEqual(["github", "linear"]);
+		expect(
+			parseAgentFields({
+				name: "mcp-array",
+				description: "desc",
+				mcpServers: ["github", "linear"],
+			})?.mcpServers,
+		).toEqual(["github", "linear"]);
+	});
+
 	test("returns undefined autoloadSkills when field absent", () => {
 		const fields = parseAgentFields({
 			name: "oracle",

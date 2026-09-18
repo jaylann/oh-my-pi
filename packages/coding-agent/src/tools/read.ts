@@ -2777,6 +2777,8 @@ export class ReadTool implements AgentTool<typeof readSchema, ReadToolDetails> {
 			localProtocolOptions: this.session.localProtocolOptions,
 			skills: this.session.skills,
 			rules: this.session.activeRules,
+			mcpServerNames: this.session.getActiveMCPServerNames?.(),
+			activateMCPServers: this.session.activateMCPServers,
 			xd: {
 				read: async name => {
 					if (name === REPORT_ISSUE_DEVICE_NAME) return reportIssueDeviceUsage();

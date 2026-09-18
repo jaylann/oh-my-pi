@@ -14,6 +14,8 @@ export interface SkillFrontmatter {
 	description?: string;
 	globs?: string[];
 	alwaysApply?: boolean;
+	/** MCP servers explicitly authorized when this skill is activated. */
+	mcpServers?: string[];
 	/**
 	 * When `true`, the skill is loaded and accessible via `skill://<name>` (and
 	 * `/skill:<name>` slash commands), but is omitted from the rendered system

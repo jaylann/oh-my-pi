@@ -413,6 +413,8 @@ export class ExtensionList implements Component {
 				return theme.fg("success", theme.status.enabled);
 			case "connecting":
 				return theme.fg("muted", theme.status.running);
+			case "dormant":
+				return theme.fg("muted", theme.status.running);
 			case "disconnected":
 				return theme.fg("dim", theme.status.shadowed);
 			case "inactive":

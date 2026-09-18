@@ -124,7 +124,8 @@ export type RpcSessionChangeResult =
 
 export type RpcSessionChangeSession = Pick<AgentSession, "newSession" | "switchSession" | "branch">;
 
-export type RpcSkillCommandSession = Pick<AgentSession, "promptCustomMessage" | "skills" | "skillsSettings">;
+type RpcSkillCommandSession = Pick<AgentSession, "promptCustomMessage" | "skills" | "skillsSettings"> &
+	Partial<Pick<AgentSession, "activateMCPServers">>;
 export type RpcSkillCommandResult = { agentInvoked: true };
 
 export interface RpcSkillInvocation extends SkillPromptInput {
@@ -158,6 +159,14 @@ export async function runRpcSkillCommand(
 	streamingBehavior: "steer" | "followUp" = "steer",
 	prebuilt?: BuiltSkillPromptMessage,
 ): Promise<boolean> {
+	if (invocation.skill.mcpServers?.length) {
+		if (!session.activateMCPServers) {
+			throw new Error(
+				`Skill "${invocation.skill.name}" requires MCP activation, but this session cannot activate MCP servers`,
+			);
+		}
+		await session.activateMCPServers(invocation.skill.mcpServers);
+	}
 	const built = prebuilt ?? (await buildSkillPromptMessage(invocation.skill, invocation, "user"));
 	return session.promptCustomMessage(
 		{

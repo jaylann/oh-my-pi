@@ -93,6 +93,15 @@ export class SkillProtocolHandler implements ProtocolHandler {
 		} else {
 			targetPath = context?.pathOnly === true ? skill.baseDir : skill.filePath;
 		}
+		if (!hasRelativePath && context?.pathOnly !== true && skill.mcpServers?.length) {
+			const activate = context?.activateMCPServers;
+			if (!activate) {
+				throw new Error(
+					`Skill "${skill.name}" requires MCP activation, but this session cannot activate MCP servers`,
+				);
+			}
+			await activate(skill.mcpServers);
+		}
 
 		let stats: fsTypes.Stats;
 		try {

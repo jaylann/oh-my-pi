@@ -906,8 +906,9 @@ function getUsageTokens(usage: unknown): number {
  * always honored. The proxy adds only the Task-specific 60s call timeout,
  * combining its abort signal with the caller's around source execution.
  */
-export function createMCPProxyTools(mcpManager: MCPManager): CustomTool[] {
-	return mcpManager.getTools().map(tool => {
+export function createMCPProxyTools(mcpManager: MCPManager, serverNames?: ReadonlySet<string>): CustomTool[] {
+	const sourceTools = serverNames ? mcpManager.getToolsForServers(serverNames) : mcpManager.getTools();
+	return sourceTools.map(tool => {
 		const serverName = tool.mcpServerName ?? "";
 		const mcpToolName = tool.mcpToolName ?? "";
 		return {
@@ -3659,7 +3660,11 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 			const restrictToolNames = options.restrictToolNames === true;
 			const enableMCP = !restrictToolNames && (options.enableMCP ?? true);
 			const mcpManager = enableMCP ? options.mcpManager : undefined;
-			const mcpProxyTools = mcpManager ? createMCPProxyTools(mcpManager) : [];
+			const mcpServerNames = new Set(agent.mcpServers ?? mcpManager?.getStartupServerNames() ?? []);
+			if (mcpManager && agent.mcpServers !== undefined) {
+				await mcpManager.activateServers(agent.mcpServers);
+			}
+			const mcpProxyTools = mcpManager ? createMCPProxyTools(mcpManager, mcpServerNames) : [];
 			const sessionCustomTools = [...mcpProxyTools, ...(options.customTools ?? [])];
 
 			// Derive subagent-scoped telemetry from the parent's config so the
@@ -3802,6 +3807,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 				skipPythonPreflight,
 				enableMCP,
 				mcpManager,
+				mcpServerNames: Array.from(mcpServerNames),
 				customTools: sessionCustomTools.length > 0 ? sessionCustomTools : undefined,
 				localProtocolOptions: options.localProtocolOptions,
 				telemetry: subagentTelemetry,
@@ -4045,6 +4051,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 			// Autoload skills via sendCustomMessage (same mechanic as /skill:<name>)
 			if (options.autoloadSkills?.length) {
 				for (const skill of options.autoloadSkills) {
+					if (skill.mcpServers?.length) await session.activateMCPServers(skill.mcpServers);
 					const { message } = await buildSkillPromptMessage(skill, { args: "" }, "autoload");
 					await session.sendCustomMessage(
 						{

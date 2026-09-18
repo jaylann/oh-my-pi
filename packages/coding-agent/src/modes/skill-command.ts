@@ -11,7 +11,8 @@ type SkillCommandHost = Pick<
 	| "clearOptimisticSkillMessage"
 	| "optimisticSkillMessagePending"
 > & {
-	session: Pick<InteractiveModeContext["session"], "promptCustomMessage" | "isStreaming">;
+	session: Pick<InteractiveModeContext["session"], "promptCustomMessage" | "isStreaming"> &
+		Partial<Pick<InteractiveModeContext["session"], "activateMCPServers">>;
 };
 
 type SkillPromptMessage = Pick<
@@ -67,6 +68,12 @@ export async function buildSkillCommandPrompt(
 	if (!parsed) return undefined;
 	const skill = ctx.skillCommands.get(getSkillSlashCommandName({ name: parsed.name }));
 	if (!skill) return undefined;
+	if (skill.mcpServers?.length) {
+		if (!ctx.session.activateMCPServers) {
+			throw new Error(`Skill "${skill.name}" requires MCP activation, but this session cannot activate MCP servers`);
+		}
+		await ctx.session.activateMCPServers(skill.mcpServers);
+	}
 
 	const built = await buildSkillPromptMessage(skill, parsed, "user");
 	const textBlock: TextContent = { type: "text", text: built.message };

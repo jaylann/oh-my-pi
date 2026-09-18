@@ -1055,6 +1055,7 @@ export class AcpAgent implements Agent {
 		if (!skill) {
 			return false;
 		}
+		if (skill.mcpServers?.length) await record.session.activateMCPServers(skill.mcpServers);
 		const built = await buildSkillPromptMessage(skill, parsed, "user");
 		await record.session.promptCustomMessage(
 			{

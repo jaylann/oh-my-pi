@@ -139,6 +139,10 @@ export interface ResolveContext {
 	localProtocolOptions?: LocalProtocolOptions;
 	/** Calling session's loaded skills. Prefer this over process-global skill state. */
 	skills?: readonly Skill[];
+	/** MCP servers whose resources are authorized in the calling session. */
+	mcpServerNames?: ReadonlySet<string>;
+	/** Activate MCP servers declared by the resolved skill. */
+	activateMCPServers?: (serverNames: readonly string[]) => Promise<void>;
 	/**
 	 * Calling session's agent-scoped applicable rule set (rulebook + always-apply
 	 * + triggered TTSR rules, already bucketed by `agents` frontmatter). Prefer

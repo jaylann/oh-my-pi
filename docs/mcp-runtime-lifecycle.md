@@ -5,8 +5,8 @@ This document describes how MCP servers are discovered, connected, exposed as to
 ## Lifecycle at a glance
 
 1. **SDK startup** kicks off MCP discovery (unless MCP is disabled): headless/SDK sessions await `discoverAndLoadMCPTools()`; interactive sessions (`hasUI: true`) create the manager up front and defer `discoverAndConnect()` until the session is live.
-2. **Discovery** (`loadAllMCPConfigs`) resolves MCP server configs from capability sources, filters disabled/project/Exa entries and browser MCP servers when the built-in browser prelude is enabled, and preserves source metadata.
-3. **Manager connect phase** (`MCPManager.connectServers`) starts per-server connect + `tools/list` in parallel.
+2. **Discovery** (`loadAllMCPConfigs`) resolves MCP server configs, filters hard-disabled/project/Exa/browser entries, preserves source metadata, and separates default `load: "startup"` servers from dormant `load: "on-demand"` servers.
+3. **Manager connect phase** (`MCPManager.connectServers`) starts per-server connect + `tools/list` in parallel for startup servers only.
 4. **Fast startup gate** waits up to 250ms, then may return:
    - fully loaded `MCPTool`s,
    - failures per server,
@@ -43,6 +43,7 @@ Filtering behavior:
 - `enableProjectConfig: false` removes project-level entries (`_source.level === "project"`).
 - `enabled: false` entries are suppressed unless the active-profile user `enabledServers` allowlist names them; the user `disabledServers` denylist always suppresses a same-named entry.
 - Exa servers are filtered out by default and API keys are extracted for native Exa tool integration, unless the config explicitly requests Exa tools the native integration does not provide (`web_fetch_exa`, `web_search_advanced_exa`); browser automation MCP servers are filtered when `filterBrowser` is true.
+- `load: "on-demand"` entries remain in manager config/source state but do not connect, consult the tool cache, list tools/resources/prompts, or contribute instructions until an authorized agent/skill activation.
 
 Result includes both `configs` and `sources` (metadata used later for provider labeling).
 
@@ -67,12 +68,14 @@ So startup does not fail the whole agent session when individual MCP servers fai
 - `#pendingReconnections: Map<string, Promise<MCPServerConnection | null>>` — reconnects in progress after a dropped transport or explicit reconnect.
 - `#serverConfigs: Map<string, MCPServerConfig>` — original unresolved configs preserved so reconnect can re-resolve credentials without leaking resolved tokens.
 - `#reconnectHistory: Map<string, number[]>` plus `#epoch` — per-server crash-window accounting and invalidation of reconnect attempts that outlive a global disconnect.
+- `#dormantServers` and `#startupServers` distinguish discovered on-demand definitions from the backward-compatible eager set.
 - listener/callback state, including a bounded pending-notification FIFO and tracked resource subscriptions/refreshes.
 
 `getConnectionStatus(name)` derives status from these maps:
 
 - `connected` if in `#connections`,
 - `connecting` if pending connect, pending tool load, or pending reconnect,
+- `dormant` if configured with `load: "on-demand"` and not yet activated,
 - `disconnected` otherwise.
 
 ## Connection establishment and startup timing
@@ -138,6 +141,8 @@ Each pending `toolsPromise` also has a background continuation that eventually:
 
 Server and tool name components are lowercased and sanitized to letters/underscores. If two distinct origins mint the same runtime name, OMP logs the collision and keeps a deterministic winner based on the original server/tool identity, so reconnect ordering cannot change ownership.
 
+Tool, prompt, instruction, route, and resource exposure is session-local. The manager may share a connected transport across parent and child sessions, but each session filters the manager catalog through its authorized server-name set. Agent `mcpServers` activates only the child; skill `mcpServers` extends only the current session. MCP resource routing applies the same set, so another session cannot read a child-only server merely because its transport exists.
+
 ### Tool calls
 
 - `MCPTool` calls tools through an already connected `MCPServerConnection`.
@@ -158,12 +163,13 @@ Both return structured tool output and convert remaining transport/tool errors i
 
 `/mcp reload` (`src/modes/controllers/mcp-command-controller.ts`) does:
 
-1. `mcpManager.disconnectAll()`,
-2. clears stale MCP prompt commands,
-3. calls `mcpManager.discoverAndConnect()` with the same project/Exa/browser filters as startup,
-4. calls `session.refreshMCPTools(mcpManager.getTools())`.
+1. remembers the current session's authorized server names,
+2. `disconnectAll()` and rediscovery rebuild the startup/dormant split,
+3. removed, disabled, or newly filtered names are dropped,
+4. still-authorized on-demand servers are reactivated,
+5. `session.refreshMCPTools(manager.getToolsForServers(authorized))` rebinds only the current session's visible tools.
 
-`session.refreshMCPTools()` (`src/session/agent-session.ts`) removes all `mcp__` tools, re-wraps the latest MCP tools, and re-activates the tool set so changes apply without restarting. The owning SDK session also installs `setOnToolsChanged`, so late initial connections, server `tools/list_changed` notifications, reconnects, and disconnects can trigger the same rebinding. Explicit `/mcp reconnect <name>` performs one final refresh after the manager reconnect completes.
+`session.refreshMCPTools()` removes all `mcp__` tools, re-wraps the filtered MCP tools, and re-activates the tool set so changes apply without restarting. The owning SDK session also installs `setOnToolsChanged`, and that callback applies the same session filter to late initial connections, `tools/list_changed` notifications, reconnects, and disconnects. Explicit `/mcp reconnect <name>` also refreshes through the current authorization set.
 
 ## Server-initiated notifications
 

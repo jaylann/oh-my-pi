@@ -69,6 +69,7 @@ describe("MCP incremental connectServers", () => {
 		expect(manager.getTools()).toHaveLength(MANY_TOOL_COUNT);
 
 		const refreshed: string[][] = [];
+		const activeServers = new Set([SERVER_A]);
 		await applyMcpToggleRuntime({
 			name: SERVER_B,
 			enabled: true,
@@ -78,6 +79,11 @@ describe("MCP incremental connectServers", () => {
 				refreshMCPTools: next => {
 					refreshed.push(next.map(t => t.name));
 				},
+				activateMCPServers: async names => {
+					await manager.activateServers(names);
+					for (const name of names) activeServers.add(name);
+				},
+				getActiveMCPServerNames: () => activeServers,
 			},
 			loadConfigs: async () => ({
 				configs: { [SERVER_B]: fixtureConfig() },

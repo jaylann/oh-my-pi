@@ -25,6 +25,7 @@ interface MCPConfigFile {
 		string,
 		{
 			enabled?: boolean;
+			load?: "startup" | "on-demand";
 			timeout?: number;
 			requestIdFormat?: "string" | "number";
 			command?: string;
@@ -95,6 +96,7 @@ function transformMCPConfig(config: MCPConfigFile, source: SourceMeta): MCPServe
 			const server: MCPServer = {
 				name,
 				enabled,
+				load: serverConfig.load === "on-demand" || serverConfig.load === "startup" ? serverConfig.load : undefined,
 				timeout,
 				requestIdFormat,
 				command: serverConfig.command,

@@ -17,6 +17,8 @@ export interface MCPServer {
 	name: string;
 	/** Whether this server is enabled (default: true) */
 	enabled?: boolean;
+	/** Connection policy. Omitted preserves eager startup loading. */
+	load?: "startup" | "on-demand";
 	/** Connection timeout in milliseconds */
 	timeout?: number;
 	/** Encoding for outgoing JSON-RPC request ids (default: `"number"`) */
@@ -73,6 +75,7 @@ export interface MCPServer {
 
 /** Compare the transport inputs that determine which MCP endpoint gets connected. */
 export function isSameMCPConnection(left: MCPServer, right: MCPServer): boolean {
+	if ((left.load ?? "startup") !== (right.load ?? "startup")) return false;
 	if (!Bun.deepEquals(left.auth, right.auth) || !Bun.deepEquals(left.oauth, right.oauth)) return false;
 	// Normalize against the allocator's own default so an explicit "number" is
 	// equivalent to leaving the option unset, not a distinct connection.
