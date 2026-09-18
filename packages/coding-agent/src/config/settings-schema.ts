@@ -1182,9 +1182,9 @@ export const SETTINGS_SCHEMA = {
 			group: "Display",
 			label: "Pinned Agents",
 			description:
-				"Pinned live-agent jump list above the editor (off hides it; collapsed shows a few rows with an expander; full lists all)",
+				"Pinned live-agent selector below the editor (off hides it; collapsed shows a few rows with an expander; full lists all)",
 			options: [
-				{ value: "off", label: "Off", description: "Hide the pinned jump list" },
+				{ value: "off", label: "Off", description: "Hide the live-agent selector" },
 				{ value: "collapsed", label: "Collapsed", description: "Show a few rows with an expander" },
 				{ value: "full", label: "Full", description: "Always list every live agent" },
 			],

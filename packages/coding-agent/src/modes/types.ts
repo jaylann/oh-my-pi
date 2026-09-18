@@ -146,6 +146,8 @@ export interface InteractiveModeContext {
 	invalidatePendingFocus(): void;
 	/** Candidate subagent ids under a mutable-viewport line, for click-to-focus. Empty when the line has no target. */
 	resolveViewportClickCandidates(index: number): string[];
+	/** Move focus from an empty composer into the inline live-agent selector. */
+	focusSubagentHud(): boolean;
 	/** Flip the pinned jump list between its collapsed few and the full list. */
 	togglePinnedHudExpanded(): void;
 	/** Rebuild the pinned jump list for a `display.pinnedAgents` change. */

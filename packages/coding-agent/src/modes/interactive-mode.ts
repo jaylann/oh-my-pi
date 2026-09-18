@@ -19,6 +19,7 @@ import type {
 	AutocompleteProvider,
 	Component,
 	EditorTheme,
+	Focusable,
 	LoaderMessageColorFn,
 	OverlayHandle,
 	SlashCommand,
@@ -30,6 +31,7 @@ import {
 	getPaddingX,
 	Loader,
 	Markdown,
+	matchesKey,
 	Spacer,
 	setTerminalTextSizing,
 	setTuiTight,
@@ -519,37 +521,88 @@ function isHudSubagent(session: ObservableSession): boolean {
 }
 
 /**
- * Anchored subagent HUD block with its visible session order, so click-to-focus
- * can map a rendered row back to its agent. Row 0 is the leading blank, row 1
- * the title; item rows follow in `order`; the overflow summary maps nowhere.
- * The expander row (when `layoutPinnedHud` shows one) resolves to the toggle
- * sentinel, which the click router handles before any registry lookup.
- * Rendering delegates to the same `Text` mount as before, so output bytes are
- * unchanged — only the row map is new. Long rows wrap inside `Text` (content
- * is two cells narrower than the terminal), so the map is rebuilt per render
- * from measured wrapped heights: continuation rows belong to the agent (or
- * toggle) whose logical row started them.
+ * Inline subagent selector rendered below the composer. It keeps the existing
+ * click hit-map while adding Claude-style keyboard focus: Down enters from the
+ * empty editor, arrows move, Enter opens, and Esc returns to the prompt.
  */
-export class SubagentHudComponent implements Component {
+export class SubagentHudComponent implements Component, Focusable {
 	readonly #text: Text;
 	readonly #lines: readonly string[];
 	readonly #order: readonly string[];
 	readonly #toggleLine: number | undefined;
+	readonly #onActivate: ((id: string) => void) | undefined;
+	readonly #onCancel: (() => void) | undefined;
+	readonly #requestRender: (() => void) | undefined;
 	#physicalOwner: (string | undefined)[] = [];
-	constructor(lines: readonly string[], order: readonly string[], toggleRow?: number) {
+	#selectedIndex: number;
+	focused = false;
+
+	constructor(
+		lines: readonly string[],
+		order: readonly string[],
+		toggleRow?: number,
+		options: {
+			initialSelectedId?: string;
+			onActivate?: (id: string) => void;
+			onCancel?: () => void;
+			requestRender?: () => void;
+		} = {},
+	) {
 		this.#text = new Text(lines.join("\n"), 1, 0);
 		this.#lines = lines;
 		this.#order = order;
 		this.#toggleLine = toggleRow;
+		this.#onActivate = options.onActivate;
+		this.#onCancel = options.onCancel;
+		this.#requestRender = options.requestRender;
+		const initial = options.initialSelectedId ? order.indexOf(options.initialSelectedId) : -1;
+		this.#selectedIndex = initial >= 0 ? initial : 0;
 	}
+
+	get selectedId(): string | undefined {
+		return this.#order[this.#selectedIndex];
+	}
+
+	selectFirst(): void {
+		this.#selectedIndex = 0;
+	}
+
+	handleInput(data: string): void {
+		if (matchesKey(data, "escape")) {
+			this.#onCancel?.();
+			return;
+		}
+		if (this.#order.length === 0) return;
+		if (matchesKey(data, "up") || data === "k") {
+			this.#selectedIndex = Math.max(0, this.#selectedIndex - 1);
+		} else if (matchesKey(data, "down") || data === "j") {
+			this.#selectedIndex = Math.min(this.#order.length - 1, this.#selectedIndex + 1);
+		} else if (matchesKey(data, "enter") || matchesKey(data, "return")) {
+			const id = this.selectedId;
+			if (id !== undefined) this.#onActivate?.(id);
+			return;
+		} else {
+			return;
+		}
+		this.#requestRender?.();
+	}
+
 	render(width: number): readonly string[] {
 		const rows = this.#text.render(width);
 		this.#rebuildHitMap(width, rows.length);
-		return rows;
+		const selected = this.focused ? this.selectedId : undefined;
+		if (selected === undefined) return rows;
+		return rows.map((row, index) => {
+			if (this.#physicalOwner[index] !== selected) return row;
+			const padding = Math.max(0, width - visibleWidth(row));
+			return theme.bg("selectedBg", `${row}${" ".repeat(padding)}`);
+		});
 	}
+
 	getClickAgentAtRow(row: number): string | undefined {
 		return row >= 0 && row < this.#physicalOwner.length ? this.#physicalOwner[row] : undefined;
 	}
+
 	// Native wrap splits paragraphs independently, so per-line wrapped
 	// heights compose exactly to the rendered row count. A length mismatch
 	// means the wrap contract drifted: fall back to one row per line (the
@@ -694,7 +747,10 @@ export function renderSubagentHudLines(sessions: ObservableSession[], columns: n
 				];
 	return [
 		"",
-		truncateToWidth(theme.bold(theme.fg("accent", "Subagents")), columns),
+		truncateToWidth(
+			`${theme.bold(theme.fg("accent", "Subagents"))}  ${theme.fg("dim", "↓ select · Enter open")}`,
+			columns,
+		),
 		...rows.map(line => truncateToWidth(`${outerIndent}${line}`, columns, "")),
 		...toggleRow,
 	];
@@ -1025,6 +1081,33 @@ export class InteractiveMode implements InteractiveModeContext {
 	invalidatePendingFocus(): void {
 		this.#focusController.invalidatePendingFocus();
 	}
+
+	/** Move keyboard focus from an empty composer into the live inline agent list. */
+	focusSubagentHud(): boolean {
+		let hud = this.#subagentHud;
+		if (
+			!hud ||
+			this.ui.hasOverlay() ||
+			this.ui.getFocused() !== this.editor ||
+			this.editor.getText().trim().length > 0
+		) {
+			return false;
+		}
+		if (
+			settings.get("display.pinnedAgents") === "collapsed" &&
+			this.#observerRegistry.getSessions().filter(isHudSubagent).length > SUBAGENT_HUD_COLLAPSED_LIMIT &&
+			this.#pinnedHudOverride !== true
+		) {
+			this.#pinnedHudOverride = true;
+			this.#renderSubagentList();
+			hud = this.#subagentHud;
+			if (!hud) return false;
+		}
+		hud.selectFirst();
+		this.ui.setFocus(hud);
+		this.ui.requestRender();
+		return true;
+	}
 	/**
 	 * Whether inline mouse capture is opted in. Never throws: the render hot
 	 * path reads this every frame, including in suites (or teardown races)
@@ -1109,6 +1192,8 @@ export class InteractiveMode implements InteractiveModeContext {
 	#observerRegistry: SessionObserverRegistry;
 	/** Click override for the pinned jump-list density; undefined follows `display.pinnedAgents`. */
 	#pinnedHudOverride: boolean | undefined;
+	/** Current inline selector instance; replaced atomically as observer rows change. */
+	#subagentHud: SubagentHudComponent | undefined;
 	#eventBus?: EventBus;
 	#subagentEventBus?: EventBus;
 	#eventBusUnsubscribers: Array<() => void> = [];
@@ -1512,21 +1597,20 @@ export class InteractiveMode implements InteractiveModeContext {
 			this.chatContainer,
 			this.pendingMessagesContainer,
 			this.todoContainer,
-			this.subagentContainer,
 			this.btwContainer,
 			this.omfgContainer,
 			this.cleanseContainer,
 			this.errorBannerContainer,
 			this.modelCycleContainer,
 			this.deferredCommandContainer,
-			// Working loader / transient status sits below the sticky todo + subagent
-			// HUDs, just above the editor's hook-widget top margin — so it reads next to
-			// the prompt while keeping the one-line gap above the editor (the band
-			// composer collapses that gap so its status band sits flush).
+			// Working loader / transient status stays just above the editor's
+			// hook-widget top margin, while the live-agent selector remains
+			// directly below the editor.
 			this.statusContainer,
 			this.attachmentChipsContainer,
 			this.hookWidgetContainerAbove,
 			this.editorContainer,
+			this.subagentContainer,
 			this.hookWidgetContainerBelow,
 		]);
 		this.ui.setFocus(this.editor);
@@ -3325,23 +3409,48 @@ export class InteractiveMode implements InteractiveModeContext {
 	}
 
 	/**
-	 * Anchored HUD of in-flight subagents, mirroring the Todos block above the
-	 * editor. Driven entirely by observer-registry change events, so rows appear
-	 * on spawn and the whole block clears itself once the last subagent leaves
-	 * the "active" state.
+	 * Anchored selector of in-flight subagents below the editor. Driven entirely
+	 * by observer-registry change events, so rows appear on spawn and the whole
+	 * block clears itself once the last subagent leaves the "active" state.
 	 */
 	#renderSubagentList(): void {
+		const previous = this.#subagentHud;
+		const wasFocused = previous !== undefined && this.ui.getFocused() === previous;
+		const selectedId = previous?.selectedId;
 		this.subagentContainer.clear();
+		this.#subagentHud = undefined;
 		const mode = settings.get("display.pinnedAgents");
-		if (mode === "off") return;
+		if (mode === "off") {
+			if (wasFocused) this.ui.setFocus(this.editor);
+			return;
+		}
 		const sessions = this.#observerRegistry.getSessions();
 		const running = sessions.filter(isHudSubagent);
 		const expanded = this.#pinnedHudOverride ?? mode === "full";
 		const lines = renderSubagentHudLines(sessions, this.ui.terminal.columns, expanded);
-		if (lines.length === 0) return;
+		if (lines.length === 0) {
+			if (wasFocused) this.ui.setFocus(this.editor);
+			return;
+		}
 		const layout = layoutPinnedHud(running.length, expanded);
-		const order = running.map(session => session.id);
-		this.subagentContainer.addChild(new SubagentHudComponent(lines, order, layout.toggleRow));
+		const order = running.slice(0, layout.itemRows).map(session => session.id);
+		const hud = new SubagentHudComponent(lines, order, layout.toggleRow, {
+			initialSelectedId: selectedId,
+			onActivate: id => {
+				this.ui.setFocus(this.editor);
+				void this.focusAgentSession(id).catch((error: unknown) => {
+					this.showStatus(error instanceof Error ? error.message : String(error));
+				});
+			},
+			onCancel: () => {
+				this.ui.setFocus(this.editor);
+				this.ui.requestRender();
+			},
+			requestRender: () => this.ui.requestRender(),
+		});
+		this.#subagentHud = hud;
+		this.subagentContainer.addChild(hud);
+		if (wasFocused) this.ui.setFocus(hud);
 	}
 
 	#vibeParentSession(): VibeParentSession {

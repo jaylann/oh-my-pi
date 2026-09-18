@@ -203,6 +203,7 @@ export class InputController {
 	#enhancedPaste?: EnhancedPasteController;
 	#draftText: string | undefined;
 	#focusedLeftTapListenerInstalled = false;
+	#inlineAgentSelectorListenerInstalled = false;
 	#focusedPasteListenerInstalled = false;
 	#btwBranchListenerInstalled = false;
 	#btwCopyListenerInstalled = false;
@@ -289,6 +290,14 @@ export class InputController {
 				if (!matchesKey(data, "left")) return undefined;
 				if (this.ctx.editor.getText().trim()) return undefined;
 				this.#handleFocusedLeftTap();
+				return { consume: true };
+			});
+		}
+		if (!this.#inlineAgentSelectorListenerInstalled) {
+			this.#inlineAgentSelectorListenerInstalled = true;
+			this.ctx.ui.addInputListener(data => {
+				if (!matchesKey(data, "down")) return undefined;
+				if (!this.ctx.focusSubagentHud()) return undefined;
 				return { consume: true };
 			});
 		}

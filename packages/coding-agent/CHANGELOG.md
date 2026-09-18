@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+
+- Added a keyboard-selectable live-agent panel below the editor: press `↓` from an empty prompt, choose with arrows or `j`/`k`, open with `Enter`, and return with `Esc`.
+
 ### Fixed
 
 - Fixed `omp auth-broker token` and `omp auth-gateway token` exiting silently without creating a token on Windows when no token file exists yet; token and config reads now use `node:fs` instead of `Bun.file`.

@@ -1,8 +1,8 @@
 /**
- * Contract: the anchored subagent HUD (rendered above the editor, next to the
- * Todos block) lists every running subagent — detached background spawns and
- * sync task calls alike — as numbered `N Id: description` jump-list rows and
- * yields no output once nothing qualifies, so the block self-clears.
+ * Contract: the anchored subagent HUD rendered below the editor lists every
+ * running subagent — detached background spawns and sync task calls alike — as
+ * numbered `N Id: description` rows, supports keyboard selection, and yields
+ * no output once nothing qualifies so the block self-clears.
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "bun:test";
 import * as path from "node:path";
@@ -524,6 +524,36 @@ describe("SubagentHudComponent click rows", () => {
 		expect(hud.getClickAgentAtRow(shortRow)).toBe("Short");
 		expect(hud.getClickAgentAtRow(shortRow + 1)).toBeUndefined();
 	});
+
+	it("selects agents with arrows, opens with Enter, and cancels with Esc", () => {
+		const activated: string[] = [];
+		let cancelled = 0;
+		let renderRequests = 0;
+		const hud = new SubagentHudComponent(
+			renderSubagentHudLines([makeSession({ id: "Alpha" }), makeSession({ id: "Beta" })], 120),
+			["Alpha", "Beta"],
+			undefined,
+			{
+				onActivate: id => activated.push(id),
+				onCancel: () => {
+					cancelled += 1;
+				},
+				requestRender: () => {
+					renderRequests += 1;
+				},
+			},
+		);
+
+		hud.focused = true;
+		expect(hud.selectedId).toBe("Alpha");
+		hud.handleInput("\x1b[B");
+		expect(hud.selectedId).toBe("Beta");
+		expect(renderRequests).toBe(1);
+		hud.handleInput("\r");
+		expect(activated).toEqual(["Beta"]);
+		hud.handleInput("\x1b");
+		expect(cancelled).toBe(1);
+	});
 });
 
 describe("layoutPinnedHud", () => {
@@ -635,5 +665,36 @@ describe("InteractiveMode subagent observer UI sync", () => {
 		mode.applyPinnedAgentsSetting();
 		expect(hudText()).not.toContain("Override4");
 		expect(hudText()).toContain("more — expand");
+	});
+
+	it("renders below the editor and enters keyboard selection with Down", async () => {
+		await mode.init({ suppressWelcomeIntro: true });
+		vi.useFakeTimers();
+		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, makeLifecycle("BelowEditor", 0, "live work"));
+		await Promise.resolve();
+		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, makeLifecycle("Second", 0, "live work"));
+		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, makeLifecycle("Third", 0, "live work"));
+		eventBus.emit(TASK_SUBAGENT_LIFECYCLE_CHANNEL, makeLifecycle("Fourth", 0, "live work"));
+		vi.runAllTimers();
+		await Promise.resolve();
+
+		mode.editor.setText("ENTRY-MARKER");
+		const frame = mode.composer.renderFrame({ columns: 120, rows: 60 }).viewport.map(line => Bun.stripANSI(line));
+		const editorRow = frame.findIndex(line => line.includes("ENTRY-MARKER"));
+		const agentRow = frame.findIndex(line => line.includes("BelowEditor"));
+		expect(editorRow).toBeGreaterThanOrEqual(0);
+		expect(agentRow).toBeGreaterThan(editorRow);
+
+		mode.editor.setText("");
+		mode.ui.injectDebugInput("\x1b[B");
+		const hud = mode.subagentContainer.children[0];
+		expect(hud).toBeInstanceOf(SubagentHudComponent);
+		expect(mode.ui.getFocused()).toBe(hud);
+		mode.ui.injectDebugInput("\x1b[B");
+		mode.ui.injectDebugInput("\x1b[B");
+		mode.ui.injectDebugInput("\x1b[B");
+		expect((hud as SubagentHudComponent).selectedId).toBe("Fourth");
+		mode.ui.injectDebugInput("\x1b");
+		expect(mode.ui.getFocused()).toBe(mode.editor);
 	});
 });

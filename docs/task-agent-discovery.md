@@ -98,7 +98,7 @@ Session definitions are appended after discovered agents, so an existing agent w
 
 ## Watch running agents
 
-After dispatch, press `Alt+A` to open [Agent Hub](./agent-hub.md). Its live roster shows each task agent's status, current activity, model, age, and usage. Select an agent to read its transcript and steer it directly; parked agents can be revived from the same view. Enable `tui.mouse` to click live task cards and jump-list rows instead, or watch the pinned `Subagents` block above the editor.
+After dispatch, press `Alt+A` to open [Agent Hub](./agent-hub.md). Its live roster shows each task agent's status, current activity, model, age, and usage. Select an agent to read its transcript and steer it directly; parked agents can be revived from the same view. Active agents also appear in the inline `Subagents` selector below the editor: press `↓` from an empty editor to select one, or enable `tui.mouse` to click live task cards and selector rows.
 
 ### `vibe_spawn` tier routing
 
