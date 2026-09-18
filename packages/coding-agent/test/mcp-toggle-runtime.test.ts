@@ -15,7 +15,7 @@ function stubCustomTool(name: string): CustomTool {
 }
 
 describe("applyMcpToggleRuntime", () => {
-	test("disable disconnects the live manager and refreshes session tools", async () => {
+	test("disable disconnects the live manager and refreshes only authorized session tools", async () => {
 		const disconnected: string[] = [];
 		const refreshed: CustomTool[][] = [];
 		const tools = [stubCustomTool("other_tool")];
@@ -26,6 +26,10 @@ describe("applyMcpToggleRuntime", () => {
 			manager: {
 				getConnectionStatus: () => "connected",
 				getTools: () => tools,
+				getToolsForServers: () => tools,
+				registerServer: () => {
+					throw new Error("disable must not register");
+				},
 				disconnectServer: async name => {
 					disconnected.push(name);
 				},
@@ -37,14 +41,19 @@ describe("applyMcpToggleRuntime", () => {
 				refreshMCPTools: next => {
 					refreshed.push(next);
 				},
+				activateMCPServers: async () => {
+					throw new Error("disable must not activate");
+				},
+				getActiveMCPServerNames: () => new Set(["other"]),
 			},
 		});
 		expect(disconnected).toEqual(["github"]);
 		expect(refreshed).toEqual([tools]);
 	});
 
-	test("enable reconnects a disconnected server then refreshes session tools", async () => {
-		const connected: Array<Record<string, { command: string }>> = [];
+	test("enable registers and activates a disconnected startup server before refreshing", async () => {
+		const registered: string[] = [];
+		const activated: string[][] = [];
 		const refreshed: CustomTool[][] = [];
 		const tools = [stubCustomTool("github_search")];
 		await applyMcpToggleRuntime({
@@ -59,27 +68,68 @@ describe("applyMcpToggleRuntime", () => {
 			manager: {
 				getConnectionStatus: () => "disconnected",
 				getTools: () => tools,
+				getToolsForServers: () => tools,
+				registerServer: name => {
+					registered.push(name);
+				},
 				disconnectServer: async () => {
 					throw new Error("enable must not disconnect");
 				},
-				connectServers: async configs => {
-					connected.push(configs as Record<string, { command: string }>);
-					return { errors: new Map() };
+				connectServers: async () => {
+					throw new Error("activation owns startup connection");
 				},
 			},
 			session: {
 				refreshMCPTools: next => {
 					refreshed.push(next);
 				},
+				activateMCPServers: async names => {
+					activated.push([...names]);
+				},
+				getActiveMCPServerNames: () => new Set(["github"]),
 			},
 		});
-		expect(connected).toEqual([{ github: { command: "github-mcp-server" } }]);
+		expect(registered).toEqual(["github"]);
+		expect(activated).toEqual([["github"]]);
 		expect(refreshed).toEqual([tools]);
+	});
+
+	test("enable leaves an on-demand server dormant", async () => {
+		const registered: string[] = [];
+		const activated: string[][] = [];
+		await applyMcpToggleRuntime({
+			name: "lazy",
+			enabled: true,
+			cwd: "/tmp/project",
+			loadConfigs: async () => ({
+				configs: { lazy: { command: "lazy-mcp-server", load: "on-demand" } },
+				sources: {},
+				exaApiKeys: [],
+			}),
+			manager: {
+				getConnectionStatus: () => "dormant",
+				getTools: () => [],
+				getToolsForServers: () => [],
+				registerServer: name => {
+					registered.push(name);
+				},
+				disconnectServer: async () => {},
+				connectServers: async () => ({ errors: new Map() }),
+			},
+			session: {
+				refreshMCPTools: () => {},
+				activateMCPServers: async names => {
+					activated.push([...names]);
+				},
+				getActiveMCPServerNames: () => new Set(),
+			},
+		});
+		expect(registered).toEqual(["lazy"]);
+		expect(activated).toEqual([]);
 	});
 
 	test("enable passes startup discovery filters into config load", async () => {
 		const loads: Array<{ cwd: string; options: unknown }> = [];
-		const connected: string[] = [];
 		await applyMcpToggleRuntime({
 			name: "project-only",
 			enabled: true,
@@ -92,13 +142,14 @@ describe("applyMcpToggleRuntime", () => {
 			manager: {
 				getConnectionStatus: () => "disconnected",
 				getTools: () => [],
+				getToolsForServers: () => [],
+				registerServer: () => {
+					throw new Error("missing config must not register");
+				},
 				disconnectServer: async () => {
 					throw new Error("enable must not disconnect");
 				},
-				connectServers: async configs => {
-					connected.push(...Object.keys(configs));
-					return { errors: new Map() };
-				},
+				connectServers: async () => ({ errors: new Map() }),
 			},
 		});
 		expect(loads).toEqual([
@@ -107,6 +158,5 @@ describe("applyMcpToggleRuntime", () => {
 				options: { enableProjectConfig: false, filterExa: true, filterBrowser: true },
 			},
 		]);
-		expect(connected).toEqual([]);
 	});
 });

@@ -1,6 +1,6 @@
 import { MCPManager } from "../mcp/manager";
 import type { MCPResourceReadResult } from "../mcp/types";
-import type { InternalResource, InternalUrl, ProtocolHandler } from "./types";
+import type { InternalResource, InternalUrl, ProtocolHandler, ResolveContext } from "./types";
 
 function escapeRegex(text: string): string {
 	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -40,8 +40,14 @@ function extractResourceUri(url: InternalUrl): string {
 	return uri;
 }
 
-function resolveTargetServer(mcpManager: MCPManager, uri: string): string | undefined {
-	const servers = mcpManager.getConnectedServers();
+function resolveTargetServer(
+	mcpManager: MCPManager,
+	uri: string,
+	allowedServers?: ReadonlySet<string>,
+): string | undefined {
+	const servers = mcpManager
+		.getConnectedServers()
+		.filter(name => allowedServers === undefined || allowedServers.has(name));
 	for (const name of servers) {
 		const serverResources = mcpManager.getServerResources(name);
 		if (serverResources?.resources.some(r => r.uri === uri)) {
@@ -92,9 +98,10 @@ function resolveTargetServer(mcpManager: MCPManager, uri: string): string | unde
 	return bestTemplateMatch?.serverName;
 }
 
-function formatAvailableResources(mcpManager: MCPManager): string {
+function formatAvailableResources(mcpManager: MCPManager, allowedServers?: ReadonlySet<string>): string {
 	const available = mcpManager
 		.getConnectedServers()
+		.filter(name => allowedServers === undefined || allowedServers.has(name))
 		.flatMap(name => {
 			const serverResources = mcpManager.getServerResources(name);
 			if (!serverResources) return [];
@@ -117,14 +124,14 @@ export class McpProtocolHandler implements ProtocolHandler {
 	readonly scheme = "mcp";
 	readonly immutable = true;
 
-	async resolve(url: InternalUrl): Promise<InternalResource> {
+	async resolve(url: InternalUrl, context?: ResolveContext): Promise<InternalResource> {
 		const mcpManager = MCPManager.instance();
 		if (!mcpManager) {
 			throw new Error("No MCP manager available. MCP servers may not be configured.");
 		}
 
 		const uri = extractResourceUri(url);
-		let targetServer = resolveTargetServer(mcpManager, uri);
+		let targetServer = resolveTargetServer(mcpManager, uri, context?.mcpServerNames);
 		if (!targetServer) {
 			// A configured server may still be handshaking when discovery returned
 			// (the `connectServers` startup race deliberately leaves slow servers in
@@ -132,12 +139,15 @@ export class McpProtocolHandler implements ProtocolHandler {
 			// rather than the mid-handshake snapshot, so wait for pending connects
 			// before loading catalogs and retrying.
 			await mcpManager.waitForPendingConnections();
-			await Promise.allSettled(mcpManager.getConnectedServers().map(name => mcpManager.ensureServerResources(name)));
-			targetServer = resolveTargetServer(mcpManager, uri);
+			const allowedServers = mcpManager
+				.getConnectedServers()
+				.filter(name => context?.mcpServerNames === undefined || context.mcpServerNames.has(name));
+			await Promise.allSettled(allowedServers.map(name => mcpManager.ensureServerResources(name)));
+			targetServer = resolveTargetServer(mcpManager, uri, context?.mcpServerNames);
 		}
 		if (!targetServer) {
 			throw new Error(
-				`No MCP server has resource "${uri}".\n\nAvailable resources:\n${formatAvailableResources(mcpManager)}`,
+				`No MCP server has resource "${uri}".\n\nAvailable resources:\n${formatAvailableResources(mcpManager, context?.mcpServerNames)}`,
 			);
 		}
 

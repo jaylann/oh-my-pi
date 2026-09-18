@@ -744,6 +744,9 @@ export class AgentSession {
 	#extensionRunner: ExtensionRunner | undefined = undefined;
 	#getEvalPreludes: (() => readonly EvalPreludeDefinition[]) | undefined;
 	#reconcileBrowserMcpFilter: AgentSessionConfig["reconcileBrowserMcpFilter"];
+	#activateMCPServers: AgentSessionConfig["activateMCPServers"];
+	#setActiveMCPServerNames: AgentSessionConfig["setActiveMCPServerNames"];
+	#getActiveMCPServerNames: AgentSessionConfig["getActiveMCPServerNames"];
 	/**
 	 * Backs `ctx.setInterval`/`setTimeout`/`clearTimer` for the runner-less
 	 * command-context fallback (SDK embeddings with no extension runner). Lazily
@@ -1429,6 +1432,9 @@ export class AgentSession {
 		this.#extensionRunner = config.extensionRunner;
 		this.#getEvalPreludes = config.getEvalPreludes;
 		this.#reconcileBrowserMcpFilter = config.reconcileBrowserMcpFilter;
+		this.#activateMCPServers = config.activateMCPServers;
+		this.#setActiveMCPServerNames = config.setActiveMCPServerNames;
+		this.#getActiveMCPServerNames = config.getActiveMCPServerNames;
 		this.#customCommands = config.customCommands ?? [];
 		const recoveryHost: TurnRecoveryHost = {
 			agent: this.agent,
@@ -5588,6 +5594,25 @@ export class AgentSession {
 	/** Replaces connected MCP tools and enables them immediately. */
 	refreshMCPTools(mcpTools: CustomTool[]): Promise<void> {
 		return this.#tools.refreshMCPTools(mcpTools);
+	}
+
+	/** Activate servers declared by trusted agent/skill metadata for this session. */
+	activateMCPServers(serverNames: readonly string[]): Promise<void> {
+		if (serverNames.length === 0) return Promise.resolve();
+		if (!this.#activateMCPServers) {
+			return Promise.reject(new Error("MCP activation is unavailable in this session"));
+		}
+		return this.#activateMCPServers(serverNames);
+	}
+
+	/** Replace session-local MCP authorization after a manager reload. */
+	setActiveMCPServerNames(serverNames: readonly string[]): void {
+		this.#setActiveMCPServerNames?.(serverNames);
+	}
+
+	/** Current session-local MCP server authorization set. */
+	getActiveMCPServerNames(): ReadonlySet<string> {
+		return this.#getActiveMCPServerNames?.() ?? new Set();
 	}
 
 	/** Replaces host-owned RPC tools before the next model call. */

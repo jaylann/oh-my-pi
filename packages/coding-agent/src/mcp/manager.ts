@@ -275,6 +275,10 @@ export class MCPManager {
 	#pendingReconnections = new Map<string, Promise<MCPServerConnection | null>>();
 	/** Preserved configs for reconnection after connection loss. */
 	#serverConfigs = new Map<string, MCPServerConfig>();
+	/** Enabled servers configured for explicit activation rather than startup. */
+	#dormantServers = new Set<string>();
+	/** Servers selected by the default startup policy for session-local exposure. */
+	#startupServers = new Set<string>();
 	#discoverOptions: MCPDiscoverOptions | undefined;
 	#browserFilterMutationTail: Promise<void> = Promise.resolve();
 	/**
@@ -526,7 +530,18 @@ export class MCPManager {
 			throw error;
 		}
 		const { configs, exaApiKeys, sources } = loadedConfigs;
-		const result = await this.connectServers(configs, sources, options?.onStatus);
+		this.#startupServers.clear();
+		this.#dormantServers.clear();
+		const startupConfigs: Record<string, MCPServerConfig> = {};
+		const startupSources: Record<string, SourceMeta> = {};
+		for (const [name, config] of Object.entries(configs)) {
+			const source = sources[name];
+			this.registerServer(name, config, source);
+			if (config.load === "on-demand") continue;
+			startupConfigs[name] = config;
+			if (source) startupSources[name] = source;
+		}
+		const result = await this.connectServers(startupConfigs, startupSources, options?.onStatus);
 		result.exaApiKeys = exaApiKeys;
 		return result;
 	}
@@ -575,6 +590,19 @@ export class MCPManager {
 		this.#discoverOptions = { ...options, filterBrowser: true };
 	}
 
+	/** Register a discovered server definition without starting its transport. */
+	registerServer(name: string, config: MCPServerConfig, source?: SourceMeta): void {
+		this.#serverConfigs.set(name, config);
+		if (source) this.#sources.set(name, source);
+		if (config.load === "on-demand") {
+			this.#startupServers.delete(name);
+			this.#dormantServers.add(name);
+		} else {
+			this.#dormantServers.delete(name);
+			this.#startupServers.add(name);
+		}
+	}
+
 	/**
 	 * Connect to specific MCP servers.
 	 * Connections are made in parallel for faster startup.
@@ -584,6 +612,7 @@ export class MCPManager {
 	 * Interactive enable (`/mcp enable`, `/extensions`) can pass a single
 	 * `{ [name]: config }` without wiping the rest of the registry.
 	 */
+
 	async connectServers(
 		configs: Record<string, MCPServerConfig>,
 		sources: Record<string, SourceMeta>,
@@ -851,6 +880,41 @@ export class MCPManager {
 	}
 
 	/**
+	 * Activate an explicitly named configured server set.
+	 *
+	 * Validation is atomic: every name must have survived discovery (therefore
+	 * it is enabled and allowed) before any connection starts.
+	 */
+	async activateServers(names: readonly string[]): Promise<MCPLoadResult> {
+		const requested = Array.from(new Set(names));
+		const unavailable = requested.filter(name => !this.#serverConfigs.has(name));
+		if (unavailable.length > 0) {
+			throw new Error(`MCP activation denied for unavailable server(s): ${unavailable.join(", ")}`);
+		}
+		const configs: Record<string, MCPServerConfig> = {};
+		const sources: Record<string, SourceMeta> = {};
+		for (const name of requested) {
+			const config = this.#serverConfigs.get(name);
+			if (!config) continue;
+			configs[name] = config;
+			const source = this.#sources.get(name);
+			if (source) sources[name] = source;
+		}
+		const result = await this.connectServers(configs, sources);
+		await this.waitForPendingConnections();
+		const failed = requested.filter(name => !this.#connections.has(name));
+		if (failed.length > 0) {
+			throw new Error(`MCP activation failed for server(s): ${failed.join(", ")}`);
+		}
+		for (const name of requested) this.#dormantServers.delete(name);
+		return {
+			...result,
+			tools: this.#tools,
+			connectedServers: requested,
+		};
+	}
+
+	/**
 	 * Ownership is matched via `mcpServerName`, never a `mcp__${name}_` name
 	 * prefix: tool names are lossy-sanitized, so one server's sanitized name
 	 * can prefix another's (`atlassian` vs `atlassian:atlassian`) and a name
@@ -975,6 +1039,19 @@ export class MCPManager {
 		return this.#tools;
 	}
 
+	/** Get loaded tools exposed by a session's authorized server set. */
+	getToolsForServers(serverNames: ReadonlySet<string>): CustomTool<TSchema, MCPToolDetails>[] {
+		return this.#tools.filter(tool => {
+			const serverName = tool.mcpServerName;
+			return serverName !== undefined && serverNames.has(serverName);
+		});
+	}
+
+	/** Servers included by the backward-compatible eager startup policy. */
+	getStartupServerNames(): string[] {
+		return Array.from(this.#startupServers);
+	}
+
 	/**
 	 * Get a specific connection.
 	 */
@@ -985,7 +1062,7 @@ export class MCPManager {
 	/**
 	 * Get current connection status for a server.
 	 */
-	getConnectionStatus(name: string): "connected" | "connecting" | "disconnected" {
+	getConnectionStatus(name: string): "connected" | "connecting" | "dormant" | "disconnected" {
 		if (this.#connections.has(name)) return "connected";
 		if (
 			this.#pendingConnections.has(name) ||
@@ -993,6 +1070,7 @@ export class MCPManager {
 			this.#pendingReconnections.has(name)
 		)
 			return "connecting";
+		if (this.#dormantServers.has(name)) return "dormant";
 		return "disconnected";
 	}
 
@@ -1078,7 +1156,12 @@ export class MCPManager {
 	 */
 	getAllServerNames(): string[] {
 		return Array.from(
-			new Set([...this.#sources.keys(), ...this.#connections.keys(), ...this.#pendingConnections.keys()]),
+			new Set([
+				...this.#serverConfigs.keys(),
+				...this.#sources.keys(),
+				...this.#connections.keys(),
+				...this.#pendingConnections.keys(),
+			]),
 		);
 	}
 
@@ -1121,6 +1204,8 @@ export class MCPManager {
 		this.#serverConfigs.delete(name);
 		this.#pendingResourceRefresh.delete(name);
 		this.#reconnectHistory.delete(name);
+		this.#dormantServers.delete(name);
+		this.#startupServers.delete(name);
 		this.#forgetLostServer(name);
 
 		const connection = this.#connections.get(name);
@@ -1163,6 +1248,8 @@ export class MCPManager {
 		this.#pendingResourceRefresh.clear();
 		this.#sources.clear();
 		this.#serverConfigs.clear();
+		this.#dormantServers.clear();
+		this.#startupServers.clear();
 		this.#tools = [];
 		this.#subscribedResources.clear();
 		this.#reconnectHistory.clear();
@@ -1677,9 +1764,10 @@ export class MCPManager {
 	/**
 	 * Get all server instructions (for system prompt injection).
 	 */
-	getServerInstructions(): Map<string, string> {
+	getServerInstructions(serverNames?: ReadonlySet<string>): Map<string, string> {
 		const instructions = new Map<string, string>();
 		for (const [name, connection] of this.#connections) {
+			if (serverNames && !serverNames.has(name)) continue;
 			if (connection.instructions) {
 				instructions.set(name, connection.instructions);
 			}

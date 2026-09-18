@@ -92,6 +92,7 @@ export function createSessionStub(
 	overrides?: SessionOverrides,
 ): AgentSession {
 	if (overrides !== undefined && !isPlainObject(overrides)) return overrides as AgentSession;
+	const activeMcpServerNames = new Set<string>();
 	const stub = {
 		sessionManager,
 		settings: sessionSettings,
@@ -122,6 +123,14 @@ export function createSessionStub(
 		getContextUsage: () => undefined,
 		getGoalModeState: () => undefined,
 		refreshMCPTools: vi.fn(async () => {}),
+		activateMCPServers: vi.fn(async (names: readonly string[]) => {
+			for (const name of names) activeMcpServerNames.add(name);
+		}),
+		setActiveMCPServerNames: vi.fn((names: readonly string[]) => {
+			activeMcpServerNames.clear();
+			for (const name of names) activeMcpServerNames.add(name);
+		}),
+		getActiveMCPServerNames: () => activeMcpServerNames,
 		setMCPPromptCommands: vi.fn(),
 		setActiveToolsByName: vi.fn(async () => {}),
 		runIdleCompaction: vi.fn(async () => {}),

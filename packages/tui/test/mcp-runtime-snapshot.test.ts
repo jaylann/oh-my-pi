@@ -61,7 +61,10 @@ function connection(overrides: Partial<MCPConnectionDisplay> = {}): MCPConnectio
 	};
 }
 
-function sourceFor(status: "connected" | "connecting" | "disconnected", conn?: MCPConnectionDisplay): MCPRuntimeSource {
+function sourceFor(
+	status: "connected" | "connecting" | "dormant" | "disconnected",
+	conn?: MCPConnectionDisplay,
+): MCPRuntimeSource {
 	return {
 		getConnectionStatus: () => status,
 		getConnection: () => conn,
@@ -109,8 +112,12 @@ describe("snapshotMcpRuntime", () => {
 		expect(snap.instructions).toBe("Prefer search_code over cloning.");
 		expect(formatMcpListHint(snap)).toBe("2 tools · 1 resource · 1 prompt");
 	});
-	test("maps connecting and inactive separately from enabled-in-config", () => {
+	test("maps connecting, on-demand, and inactive separately from enabled-in-config", () => {
 		expect(snapshotMcpRuntime(server(), sourceFor("connecting")).health).toBe("connecting");
+		const dormant = snapshotMcpRuntime(server(), sourceFor("dormant"));
+		expect(dormant.health).toBe("dormant");
+		expect(formatMcpListHint(dormant)).toBe("on demand");
+		expect(formatMcpHealthLabel(dormant.health)).toBe("On demand");
 		expect(snapshotMcpRuntime(server(), sourceFor("disconnected")).health).toBe("disconnected");
 		expect(snapshotMcpRuntime(server({ enabled: false }), sourceFor("connected", connection())).health).toBe(
 			"inactive",

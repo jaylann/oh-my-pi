@@ -511,6 +511,8 @@ export class SelectorController {
 				mcpManager: this.ctx.mcpManager,
 				eventBus: this.ctx.eventBus,
 				onMcpToolsChanged: tools => this.ctx.session.refreshMCPTools(tools),
+				activateMCPServers: names => this.ctx.session.activateMCPServers(names),
+				getActiveMCPServerNames: () => this.ctx.session.getActiveMCPServerNames(),
 				browserMcpFilterEnabled: () =>
 					this.ctx.session.getEvalPreludes().some(definition => definition.name === "browser"),
 			}),

@@ -100,11 +100,21 @@ Shared fields for every transport:
 
 - `enabled?: boolean` — skip this server when `false`, unless the active-profile user `enabledServers` allowlist names it
 - `timeout?: number` — MCP request timeout in milliseconds; `0` disables client-side MCP timeouts
+- `load?: "startup" | "on-demand"` — connection policy; omitted/`"startup"` preserves eager startup behavior. `"on-demand"` discovers the definition but does not connect, call `tools/list`, load catalogs, or expose anything until an agent or skill explicitly names the server in `mcpServers`.
 - `requestIdFormat?: "number" | "string"` — outgoing JSON-RPC request-id encoding; defaults to per-transport integers. `"string"` uses collision-resistant snowflake IDs. This OMP-specific field is read only from OMP-native files, root `mcp.json` / `.mcp.json`, and OMP extension packages; configs translated from other tools ignore it.
 - `auth?: { ... }` — stored-credential metadata; managed credential injection is implemented for OAuth
 - `oauth?: { ... }` — explicit OAuth client and callback settings used during auth/reauth
 
 `OMP_MCP_TIMEOUT_MS` has process-wide precedence over every per-server `timeout`. Set it to `0` to disable client-side timeouts, or to a positive millisecond value such as `120000`. If it is unset or invalid, OMP uses the server value and then the 30-second default; invalid values are logged and ignored.
+
+On-demand activation is metadata-authorized, not prompt-controlled:
+
+- agent frontmatter `mcpServers: [server-name]` activates and exposes only those named servers in the child session;
+- skill frontmatter `mcpServers: [server-name]` activates those servers when the skill is read through `skill://<name>` or invoked as `/skill:<name>`;
+- unknown, disabled, or filtered server names fail closed;
+- a child activation reuses the shared transport but does not add tools, routes, schemas, prompts, resources, or server instructions to the parent session.
+
+Skills have no explicit end lifecycle, so their activation lasts for the current session. `enabled: false` remains hard-off and is not equivalent to `load: "on-demand"`.
 
 Remote HTTP and SSE transports do not impose an additional socket-idle timeout. Without an applicable MCP deadline, a silent connection can wait indefinitely; cancel the call or close the transport to stop it. A quiet stream alone does not prove that its peer is still reachable.
 

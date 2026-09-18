@@ -8,6 +8,7 @@ import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { createAgentSession } from "@oh-my-pi/pi-coding-agent/sdk";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
+import { createMCPProxyTools } from "@oh-my-pi/pi-coding-agent/task/executor";
 import { USER_APPEND_HEADING } from "@oh-my-pi/pi-coding-agent/system-prompt";
 import { removeSyncWithRetries, Snowflake } from "@oh-my-pi/pi-utils";
 import { getAgentDir, setAgentDir } from "@oh-my-pi/pi-utils/dirs";
@@ -406,6 +407,82 @@ describe("createAgentSession MCP server instructions (deferred UI)", () => {
 			expect(session.getXdevToolEntries().map(entry => entry.name)).not.toContain(MCP_TOOL_NAME);
 		} finally {
 			await session.dispose();
+		}
+	}, 20_000);
+
+	it("keeps an activated on-demand server out of its parent and exposes it only to an authorized child", async () => {
+		fs.writeFileSync(
+			path.join(tempDir, ".mcp.json"),
+			JSON.stringify({
+				mcpServers: {
+					instr: { type: "stdio", command: process.execPath, args: [FIXTURE_PATH], load: "on-demand" },
+				},
+			}),
+		);
+		const parentResult = await createAgentSession({
+			cwd: tempDir,
+			agentDir: tempDir,
+			modelRegistry,
+			sessionManager: SessionManager.inMemory(),
+			settings: Settings.isolated({}),
+			model: getBundledModel("openai", "gpt-4o-mini"),
+			disableExtensionDiscovery: true,
+			skills: [],
+			contextFiles: [],
+			promptTemplates: [],
+			slashCommands: [],
+			enableLsp: false,
+			skipPythonPreflight: true,
+			enableMCP: true,
+			hasUI: false,
+		});
+		const manager = parentResult.mcpManager;
+		expect(manager).toBeDefined();
+		if (!manager) throw new Error("Expected MCP manager");
+		try {
+			expect(manager.getConnectionStatus("instr")).toBe("dormant");
+			expect(manager.getTools()).toEqual([]);
+			expect(parentResult.session.systemPrompt.join("\n")).not.toContain(SERVER_INSTRUCTIONS);
+			expect(parentResult.session.systemPrompt.join("\n")).not.toContain(MCP_TOOL_NAME);
+
+			await manager.activateServers(["instr"]);
+			const childResult = await createAgentSession({
+				cwd: tempDir,
+				agentDir: tempDir,
+				modelRegistry,
+				sessionManager: SessionManager.inMemory(),
+				settings: Settings.isolated({}),
+				model: getBundledModel("openai", "gpt-4o-mini"),
+				disableExtensionDiscovery: true,
+				skills: [],
+				contextFiles: [],
+				promptTemplates: [],
+				slashCommands: [],
+				enableLsp: false,
+				skipPythonPreflight: true,
+				enableMCP: true,
+				hasUI: false,
+				mcpManager: manager,
+				mcpServerNames: ["instr"],
+				customTools: createMCPProxyTools(manager, new Set(["instr"])),
+				parentTaskPrefix: "child",
+			});
+			try {
+				const childPrompt = childResult.session.systemPrompt.join("\n");
+				await parentResult.session.refreshMCPTools(
+					manager.getToolsForServers(parentResult.session.getActiveMCPServerNames()),
+				);
+				expect(childPrompt).toContain(SERVER_INSTRUCTIONS);
+				expect(childPrompt).toContain(MCP_TOOL_NAME);
+				const parentPrompt = parentResult.session.systemPrompt.join("\n");
+				expect(parentPrompt).not.toContain(SERVER_INSTRUCTIONS);
+				expect(parentPrompt).not.toContain(MCP_TOOL_NAME);
+			} finally {
+				await childResult.session.dispose();
+			}
+			expect(manager.getConnectionStatus("instr")).toBe("connected");
+		} finally {
+			await parentResult.session.dispose();
 		}
 	}, 20_000);
 });

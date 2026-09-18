@@ -62,6 +62,12 @@ describe("config-writer concurrent mutations", () => {
 		expect(Object.keys(config.mcpServers ?? {})).toContain("MaaS Slack");
 	});
 
+	it("round-trips the on-demand load policy", async () => {
+		await addMCPServer(filePath, "lazy", { type: "stdio", command: "lazy", load: "on-demand" });
+		const config = await readMCPConfigFile(filePath);
+		expect(config.mcpServers?.lazy?.load).toBe("on-demand");
+	});
+
 	it("preserves both denylist edits when disable calls race", async () => {
 		await Promise.all([setServerDisabled(filePath, "alpha", true), setServerDisabled(filePath, "bravo", true)]);
 

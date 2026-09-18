@@ -21,6 +21,7 @@ interface AgentFrontmatter {
 	name: string;
 	description: string;
 	tools?: string[];
+	mcpServers?: string[];
 	spawns?: string;
 	model?: string | string[];
 	thinkingLevel?: string;

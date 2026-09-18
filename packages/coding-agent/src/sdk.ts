@@ -559,6 +559,11 @@ export interface CreateAgentSessionOptions {
 	enableMCP?: boolean;
 	/** Existing MCP manager to reuse when MCP is enabled (skips discovery, propagates to toolSession). */
 	mcpManager?: MCPManager;
+	/**
+	 * Session-local MCP server allowlist when reusing a manager. Omitted sessions
+	 * expose only the manager's backward-compatible startup server set.
+	 */
+	mcpServerNames?: readonly string[];
 
 	/** Enable LSP integration (tool, formatting, diagnostics, warmup). Default: true */
 	enableLsp?: boolean;
@@ -1170,9 +1175,10 @@ function createCustomToolsExtension(tools: CustomTool[], sourcePaths?: ReadonlyM
  * Build LoadedCustomCommand entries for all MCP prompts across connected servers.
  * These are re-created whenever prompts change (setOnPromptsChanged callback).
  */
-function buildMCPPromptCommands(manager: MCPManager): LoadedCustomCommand[] {
+function buildMCPPromptCommands(manager: MCPManager, serverNames?: ReadonlySet<string>): LoadedCustomCommand[] {
 	const commands: LoadedCustomCommand[] = [];
 	for (const serverName of manager.getConnectedServers()) {
+		if (serverNames && !serverNames.has(serverName)) continue;
 		const prompts = manager.getServerPrompts(serverName);
 		if (!prompts?.length) continue;
 		for (const prompt of prompts) {
@@ -2020,6 +2026,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 		// Restricted sessions cannot inherit or discover MCP capabilities.
 		const enableMCP = !restrictToolNames && (options.enableMCP ?? true);
 		let mcpManager: MCPManager | undefined = enableMCP ? options.mcpManager : undefined;
+		const activeMcpServerNames = new Set<string>(options.mcpServerNames ?? mcpManager?.getStartupServerNames() ?? []);
 		toolSession.mcpManager = mcpManager;
 		toolSession.enableMCP = enableMCP;
 		const deferMCPDiscoveryForUI = enableMCP && !mcpManager && options.hasUI === true;
@@ -2079,8 +2086,10 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 							}
 							applyMCPEnvironment(mcpResult);
 							logMCPLoadErrors(mcpResult.errors);
+							activeMcpServerNames.clear();
+							for (const name of deferredMCPManager.getStartupServerNames()) activeMcpServerNames.add(name);
 							// Connected MCP tools are enabled and mounted under xd:// devices.
-							await liveSession.refreshMCPTools(mcpResult.tools);
+							await liveSession.refreshMCPTools(deferredMCPManager.getToolsForServers(activeMcpServerNames));
 						} catch (error) {
 							logger.error("MCP tool load failed", {
 								path: ".mcp.json",
@@ -2097,6 +2106,8 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 				});
 				mcpManager = mcpResult.manager;
 				toolSession.mcpManager = mcpManager;
+				activeMcpServerNames.clear();
+				for (const name of mcpManager.getStartupServerNames()) activeMcpServerNames.add(name);
 
 				if (settings.get("mcp.notifications")) {
 					mcpManager.setNotificationsEnabled(true);
@@ -2108,17 +2119,37 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 					logger.error("MCP tool load failed", { path, error });
 				}
 
-				// MCP tools are LoadedCustomTool, extract the tool property while
-				// retaining their origins for initial registry ownership.
-				const loadedMcpTools = mcpResult.tools.map(loaded => loaded.tool);
-				customTools.push(...loadedMcpTools);
-				initialMcpManagerTools.push(...loadedMcpTools);
+				// Retain only the startup-visible manager tools for initial registry ownership.
+				const visibleMcpTools = mcpManager.getToolsForServers(activeMcpServerNames);
+				customTools.push(...visibleMcpTools);
+				initialMcpManagerTools.push(...visibleMcpTools);
 			}
 		}
+		const activateSessionMCPServers = async (serverNames: readonly string[]): Promise<void> => {
+			if (!mcpManager) throw new Error("MCP activation is unavailable in this session");
+			const unavailable = serverNames.filter(name => !mcpManager.getAllServerNames().includes(name));
+			if (unavailable.length > 0) {
+				throw new Error(`MCP activation denied for unavailable server(s): ${unavailable.join(", ")}`);
+			}
+			for (const name of serverNames) activeMcpServerNames.add(name);
+			try {
+				await mcpManager.activateServers(serverNames);
+			} finally {
+				if (hasSession && !session.isDisposed) {
+					await session.refreshMCPTools(mcpManager.getToolsForServers(activeMcpServerNames));
+					session.setMCPPromptCommands(buildMCPPromptCommands(mcpManager, activeMcpServerNames));
+				}
+			}
+		};
+		const setActiveMCPServerNames = (serverNames: readonly string[]): void => {
+			activeMcpServerNames.clear();
+			for (const name of serverNames) activeMcpServerNames.add(name);
+		};
+		toolSession.activateMCPServers = activateSessionMCPServers;
+		toolSession.getActiveMCPServerNames = () => activeMcpServerNames;
 		// Only top-level sessions own the global MCPManager. Subagents already
-		// receive the parent's manager via `options.mcpManager`, and reassigning
-		// the singleton to the same value is a no-op — keep the gate explicit
-		// to mirror the AsyncJobManager ownership rule.
+		// receive the parent's manager via `options.mcpManager`; keep the gate
+		// explicit to mirror the AsyncJobManager ownership rule.
 		if (mcpManager && !options.parentTaskPrefix) MCPManager.setInstance(mcpManager);
 
 		const builtInToolNames = [...toolRegistry.keys()];
@@ -3222,7 +3253,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			// `getServerInstructions()` are empty until the background connect
 			// completes; the rebuild that `refreshMCPTools` triggers post-discovery
 			// then picks up the mounted routes and any connected-server instructions.
-			const serverInstructions = mcpManager?.getServerInstructions();
+			const serverInstructions = mcpManager?.getServerInstructions(activeMcpServerNames);
 			// Drive guidance off the auto-learn BUILTINS that createTools actually built
 			// (provenance, not just an active name): `builtInToolNames` excludes a
 			// custom/extension tool that merely shares the name, and reflects the
@@ -3887,9 +3918,12 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			reconcileBrowserMcpFilter: mcpManager
 				? async enabled => {
 						await mcpManager.reconcileBrowserFilter(enabled);
-						return mcpManager.getTools();
+						return mcpManager.getToolsForServers(activeMcpServerNames);
 					}
 				: undefined,
+			activateMCPServers: activateSessionMCPServers,
+			setActiveMCPServerNames,
+			getActiveMCPServerNames: () => activeMcpServerNames,
 			memoryEnabled: !restrictToolNames,
 			memoryAgentDir: agentDir,
 			memoryTaskDepth: taskDepth,
@@ -3932,7 +3966,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			ensureGoalRegistered,
 			getMcpServerInstructions: mcpManager
 				? () => {
-						const raw = mcpManager.getServerInstructions();
+						const raw = mcpManager.getServerInstructions(activeMcpServerNames);
 						if (!raw || raw.size === 0) return raw;
 						const out = new Map<string, string>();
 						for (const [name, text] of raw) {
@@ -4360,9 +4394,15 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 		//     `extensionRunner` so extensions loaded in that session receive frames.
 		//     Guarded only by `mcpManager` (see the second `if` below).
 		if (mcpManager && !options.mcpManager) {
-			mcpManager.setOnToolsChanged(async tools => {
+			mcpManager.setOnToolsChanged(async () => {
 				try {
-					await session.refreshMCPTools(tools);
+					// Deferred discovery can publish tools before its outer task copies
+					// the startup set. Seed it here; on-demand activations are absent
+					// from `getStartupServerNames()` and cannot leak into the owner.
+					if (activeMcpServerNames.size === 0) {
+						for (const name of mcpManager.getStartupServerNames()) activeMcpServerNames.add(name);
+					}
+					await session.refreshMCPTools(mcpManager.getToolsForServers(activeMcpServerNames));
 				} catch (error) {
 					logger.warn("MCP tool refresh failed", {
 						error: error instanceof Error ? error.message : String(error),
@@ -4371,7 +4411,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			});
 			// Wire prompt refresh → rebuild MCP prompt slash commands
 			mcpManager.setOnPromptsChanged(serverName => {
-				const promptCommands = buildMCPPromptCommands(mcpManager);
+				const promptCommands = buildMCPPromptCommands(mcpManager, activeMcpServerNames);
 				session.setMCPPromptCommands(promptCommands);
 				logger.debug("MCP prompt commands refreshed", { path: `mcp:${serverName}` });
 			});

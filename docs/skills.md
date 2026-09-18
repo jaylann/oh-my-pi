@@ -57,6 +57,7 @@ Supported frontmatter fields on the skill type:
 - `alwaysApply?: boolean`
 - `hide?: boolean`
 - `disableModelInvocation?: boolean` (Agent Skills equivalent of `hide`; normalized from kebab-case `disable-model-invocation`)
+- `mcpServers?: string[]` — explicitly authorized MCP servers to activate when the skill is read or invoked
 - additional keys are preserved as unknown metadata
 
 Current runtime behavior:
@@ -161,6 +162,7 @@ Invoked skill content is identified by invocation kind, each with its own prompt
 
 - **User-invoked** (`user-invocation.md`, used by `/skill:<name>`): the message opens by announcing that the user invoked the skill, embeds the skill body, and appends the skill directory (`[Skill directory: <baseDir>]`) with instructions to resolve the skill's relative paths (scripts, templates) against it, plus optional `User: <args>`.
 - **Autoloaded** (`autoload.md`): a minimal provenance-only format — body followed by `Skill: <path>` and optional `User: <args>` — used when subagents auto-inject skills declared via the `autoloadSkills` agent frontmatter field; these hidden messages must not claim the user invoked them.
+- Before either prompt is dispatched, `mcpServers` entries are validated and activated for that session. Unknown, disabled, or filtered names fail closed.
 
 ## `skill://` URL behavior
 
@@ -192,6 +194,7 @@ Resolution details:
 - path traversal (`..`) is rejected
 - resolved path must remain within `baseDir`
 - missing files return an explicit `File not found` error
+- reading the root `skill://<name>` activates its declared `mcpServers` before returning content; asset reads under `skill://<name>/...` do not independently activate servers
 
 Content type:
 

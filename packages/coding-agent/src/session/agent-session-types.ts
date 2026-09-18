@@ -214,6 +214,12 @@ export interface AgentSessionConfig {
 	mcpManagerToolNames?: Iterable<string>;
 	/** Reconcile browser MCP connections after browser prelude availability changes. */
 	reconcileBrowserMcpFilter?: (enabled: boolean) => Promise<CustomTool[]>;
+	/** Activate authorized MCP servers and refresh only this session's exposure. */
+	activateMCPServers?: (serverNames: readonly string[]) => Promise<void>;
+	/** Replace the session-local MCP authorization set after rediscovery. */
+	setActiveMCPServerNames?: (serverNames: readonly string[]) => void;
+	/** Current session-local MCP server authorization set. */
+	getActiveMCPServerNames?: () => ReadonlySet<string>;
 	/** Updates tool-session predicates from the live active tool set. */
 	setActiveToolNames?: (names: Iterable<string>) => void;
 	/** Registers the built-in write transport when it is needed at runtime. */

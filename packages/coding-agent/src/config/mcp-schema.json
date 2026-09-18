@@ -116,6 +116,11 @@
           "type": "boolean",
           "description": "Whether OMP should try to connect this server."
         },
+        "load": {
+          "type": "string",
+          "enum": ["startup", "on-demand"],
+          "description": "When to connect the server. Defaults to \"startup\"; \"on-demand\" stays dormant until an authorized agent or skill activates it."
+        },
         "timeout": {
           "type": "number",
           "minimum": 0,

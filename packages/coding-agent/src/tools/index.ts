@@ -390,6 +390,10 @@ export interface ToolSession {
 	asyncJobManager?: AsyncJobManager;
 	/** MCP manager visible to subagents without relying on the process-global singleton. */
 	mcpManager?: MCPManager;
+	/** Activate explicitly authorized MCP servers for this session. */
+	activateMCPServers?: (serverNames: readonly string[]) => Promise<void>;
+	/** MCP servers whose tools/resources are exposed in this session. */
+	getActiveMCPServerNames?: () => ReadonlySet<string>;
 	/** Local protocol root to propagate to nested subagents and eval-created agents. */
 	localProtocolOptions?: LocalProtocolOptions;
 	/** Settings instance for passing to subagents */

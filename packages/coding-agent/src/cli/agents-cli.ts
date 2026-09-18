@@ -59,6 +59,7 @@ function toFrontmatter(agent: AgentDefinition): Record<string, unknown> {
 	};
 
 	if (agent.tools && agent.tools.length > 0) frontmatter.tools = agent.tools;
+	if (agent.mcpServers && agent.mcpServers.length > 0) frontmatter.mcpServers = agent.mcpServers;
 	if (agent.spawns !== undefined) frontmatter.spawns = agent.spawns;
 	if (agent.model && agent.model.length > 0) frontmatter.model = agent.model;
 	if (agent.thinkingLevel) frontmatter.thinkingLevel = agent.thinkingLevel;

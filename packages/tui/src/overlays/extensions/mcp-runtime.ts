@@ -62,7 +62,7 @@ import {
 	sanitizeDisplayText,
 } from "./display-text";
 
-export type MCPConnectionHealth = "connected" | "connecting" | "disconnected" | "inactive";
+export type MCPConnectionHealth = "connected" | "connecting" | "dormant" | "disconnected" | "inactive";
 
 export interface MCPRuntimeCatalogItem {
 	name: string;
@@ -92,7 +92,7 @@ export interface MCPRuntimeSnapshot {
 
 /** Narrow manager surface so tests can stub without constructing MCPManager. */
 export interface MCPRuntimeSource {
-	getConnectionStatus(name: string): "connected" | "connecting" | "disconnected";
+	getConnectionStatus(name: string): "connected" | "connecting" | "dormant" | "disconnected";
 	getConnection(name: string): MCPConnectionDisplay | undefined;
 	getTools(): Array<{
 		mcpServerName?: string;
@@ -252,6 +252,8 @@ export function formatMcpListHint(snapshot: MCPRuntimeSnapshot): string {
 			return "inactive";
 		case "connecting":
 			return "connecting…";
+		case "dormant":
+			return "on demand";
 		case "disconnected":
 			return "unavailable";
 		case "connected": {
@@ -273,6 +275,8 @@ export function formatMcpHealthLabel(health: MCPConnectionHealth): string {
 			return "Connected";
 		case "connecting":
 			return "Connecting";
+		case "dormant":
+			return "On demand";
 		case "disconnected":
 			return "Not connected";
 		case "inactive":

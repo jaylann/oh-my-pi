@@ -19,9 +19,20 @@ export function createExtensionDashboardRuntime(options: {
 	mcpManager?: MCPManager;
 	eventBus?: EventBus;
 	onMcpToolsChanged?: (tools: CustomTool[]) => Promise<void> | void;
+	activateMCPServers?: (serverNames: readonly string[]) => Promise<void>;
+	getActiveMCPServerNames?: () => ReadonlySet<string>;
 	browserMcpFilterEnabled?: () => boolean;
 }): ExtensionDashboardRuntime {
-	const { cwd, settings, mcpManager, eventBus, onMcpToolsChanged, browserMcpFilterEnabled } = options;
+	const {
+		cwd,
+		settings,
+		mcpManager,
+		eventBus,
+		onMcpToolsChanged,
+		activateMCPServers,
+		getActiveMCPServerNames,
+		browserMcpFilterEnabled,
+	} = options;
 	return {
 		getDisabledExtensions: () => settings.get("disabledExtensions") ?? [],
 		setDisabledExtensions: ids => settings.set("disabledExtensions", ids),
@@ -49,7 +60,10 @@ export function createExtensionDashboardRuntime(options: {
 				enabled,
 				cwd,
 				manager: mcpManager,
-				session: onMcpToolsChanged ? { refreshMCPTools: onMcpToolsChanged } : undefined,
+				session:
+					onMcpToolsChanged && activateMCPServers && getActiveMCPServerNames
+						? { refreshMCPTools: onMcpToolsChanged, activateMCPServers, getActiveMCPServerNames }
+						: undefined,
 				discovery: {
 					enableProjectConfig: settings.get("mcp.enableProjectConfig") ?? true,
 					filterExa: true,
