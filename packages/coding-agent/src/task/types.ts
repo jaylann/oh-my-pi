@@ -44,10 +44,19 @@ export interface SubagentEventPayload {
 const outputSchemaInputSchema = type("object | boolean | string | null");
 // Coarse per-spawn thinking effort; must stay in sync with TASK_EFFORTS in ../thinking.
 const effortRule = '"lo" | "med" | "hi"' as const;
+const agentSpecSchema = type({
+	"model?": "string | string[]",
+	"thinkingLevel?": '"off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "auto"',
+	"tools?": "string[]",
+	"spawns?": '"*" | string[]',
+	"autoloadSkills?": "string[]",
+	"+": "delete",
+});
 
 export const taskItemSchema = type({
 	"name?": "string",
 	agent: "string = 'task'",
+	"agentSpec?": agentSpecSchema,
 	task: "string",
 	"outputSchema?": outputSchemaInputSchema,
 	"schemaMode?": '"permissive" | "strict"',
@@ -57,6 +66,7 @@ export const taskItemSchema = type({
 const taskItemSchemaIsolated = type({
 	"name?": "string",
 	agent: "string = 'task'",
+	"agentSpec?": agentSpecSchema,
 	task: "string",
 	"outputSchema?": outputSchemaInputSchema,
 	"schemaMode?": '"permissive" | "strict"',
@@ -68,6 +78,7 @@ const taskItemSchemaIsolated = type({
 export const taskSchema = type({
 	"name?": "string",
 	agent: "string = 'task'",
+	"agentSpec?": agentSpecSchema,
 	task: "string",
 	"outputSchema?": outputSchemaInputSchema,
 	"schemaMode?": '"permissive" | "strict"',
@@ -79,6 +90,7 @@ const taskSchemaNoIsolation = type({
 	"name?": "string",
 	agent: "string = 'task'",
 	task: "string",
+	"agentSpec?": agentSpecSchema,
 	"outputSchema?": outputSchemaInputSchema,
 	"schemaMode?": '"permissive" | "strict"',
 	"tools?": "string[]",
@@ -120,6 +132,7 @@ function createTaskSchema(options: {
 	evalToolsEnabled: boolean;
 }): BaseType {
 	const agent = taskAgentSchemaRule(options.defaultAgent);
+	const agentSpecField = { "agentSpec?": agentSpecSchema };
 	const effortField = options.effortEnabled ? { "effort?": effortRule } : {};
 	const toolsField = options.evalToolsEnabled ? { "tools?": "string[]" } : {};
 	if (options.batchEnabled) {
@@ -127,6 +140,7 @@ function createTaskSchema(options: {
 			const item = type.raw({
 				"name?": "string",
 				agent,
+				...agentSpecField,
 				task: "string",
 				...effortField,
 				"outputSchema?": outputSchemaInputSchema,
@@ -144,6 +158,7 @@ function createTaskSchema(options: {
 		const item = type.raw({
 			"name?": "string",
 			agent,
+			...agentSpecField,
 			task: "string",
 			...effortField,
 			"outputSchema?": outputSchemaInputSchema,
@@ -161,6 +176,7 @@ function createTaskSchema(options: {
 		return type.raw({
 			"name?": "string",
 			agent,
+			...agentSpecField,
 			task: "string",
 			...effortField,
 			"outputSchema?": outputSchemaInputSchema,
@@ -173,6 +189,7 @@ function createTaskSchema(options: {
 	return type.raw({
 		"name?": "string",
 		agent,
+		...agentSpecField,
 		task: "string",
 		...effortField,
 		"outputSchema?": outputSchemaInputSchema,

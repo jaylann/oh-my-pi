@@ -1704,12 +1704,30 @@ export interface StructuredSubagentOutput {
 /** Display cap for a normalized one-line label (roster line, registry `displayName`, prompt field). */
 export const LABEL_MAX = 80;
 
+export type TaskAgentThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "auto";
+
+/** Ephemeral capability and model overrides for one task spawn. */
+export interface TaskAgentSpec {
+	/** Ordered model selector/fallback patterns. */
+	model?: string | string[];
+	/** Configured thinking level for the selected model. */
+	thinkingLevel?: TaskAgentThinkingLevel;
+	/** Built-in, extension, or MCP tool allowlist. */
+	tools?: string[];
+	/** Child agent types this spawn may create. Omitted means nested spawning is denied. */
+	spawns?: string[] | "*";
+	/** Parent-discovered skills injected before the child's first prompt. */
+	autoloadSkills?: string[];
+}
+
 /** Single task item. Fields are optional defensively: args stream in token by token. */
 export interface TaskItem {
 	/** Stable agent name; becomes the registry/IRC id. Default = generated AdjectiveNoun. */
 	name?: string;
 	/** Agent type to run this item (e.g. "scout"). Defaults to the spawn policy's default agent. */
 	agent?: string;
+	/** Ephemeral one-spawn overrides layered onto the selected named agent. */
+	agentSpec?: TaskAgentSpec;
 	/** The work; required by the schema. */
 	task?: string;
 	/** Per-spawn thinking effort: lowest/middle/highest level the resolved model supports. Overrides the agent's default selector (e.g. `auto`). */
@@ -1735,6 +1753,8 @@ export interface TaskParams {
 	name?: string;
 	/** Agent type to spawn (flat form); omitted values resolve from the session spawn policy. */
 	agent?: string;
+	/** Ephemeral one-spawn overrides layered onto the selected named agent. */
+	agentSpec?: TaskAgentSpec;
 	/** The work (flat form). */
 	task?: string;
 	/** Per-spawn thinking effort (flat form): lowest/middle/highest level the resolved model supports. */

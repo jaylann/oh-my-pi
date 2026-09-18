@@ -481,6 +481,8 @@ export interface ExecutorOptions {
 	 * tool, suppressing discovered and always-included capabilities.
 	 */
 	restrictToolNames?: boolean;
+	/** Keep discovered capabilities registered while activating only the agent's explicit tool list. */
+	enforceToolAllowlist?: boolean;
 	signal?: AbortSignal;
 	onProgress?: (progress: AgentProgress) => void;
 	/**
@@ -3740,6 +3742,7 @@ export async function runSubprocess(options: ExecutorOptions): Promise<SingleRes
 				outputSchema,
 				outputSchemaMode: options.outputSchemaMode,
 				restrictToolNames: options.restrictToolNames,
+				enforceToolAllowlist: options.enforceToolAllowlist,
 				requireYieldTool: true,
 				contextFiles: options.contextFiles,
 				skills: options.skills,

@@ -27,6 +27,12 @@ Agents marked BLOCKING run inline — results return in this call; non-blocking 
   - `agent`: The agent type to spawn (e.g. {{#if scoutAvailable}}`scout`, {{/if}}`reviewer`).
     Omitting `agent` selects the spawn-policy default (`{{defaultAgent}}`). Use it only when that agent fits the task.{{#if allowedAgentsText}} Current spawn policy allows: {{allowedAgentsText}}.{{/if}}
     NEVER pass the spawn-policy default explicitly. Only omit it after checking the available agents below.
+  - `agentSpec`: Ephemeral one-spawn overrides for the selected named agent:
+    - `model`: One selector or an ordered selector/fallback array.
+    - `thinkingLevel`: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, or `auto`.
+    - `tools`: Built-in, extension, or MCP tool allowlist.
+    - `spawns`: Child-agent allowlist, or `"*"`; omitted denies nested spawning.
+    - `autoloadSkills`: Parent-discovered skill names to inject before the first prompt.
   - `task`: Complete, self-contained instructions. One-liners or missing acceptance criteria are PROHIBITED.
 {{#if evalToolsEnabled}}  - `tools`: Names of eval-defined tools (`@tool` in Python, `tool(fn, {…})` in JS) to expose to this subagent; each runs inside your kernel when the subagent calls it.
 {{/if}}
@@ -46,6 +52,12 @@ Agents marked BLOCKING run inline — results return in this call; non-blocking 
 - `agent`: The agent type to spawn (e.g. {{#if scoutAvailable}}`scout`, {{/if}}`reviewer`).
   Omitting `agent` selects the spawn-policy default (`{{defaultAgent}}`). Use it only when that agent fits the task.{{#if allowedAgentsText}} Current spawn policy allows: {{allowedAgentsText}}.{{/if}}
   NEVER pass the spawn-policy default explicitly. Only omit it after checking the available agents below.
+- `agentSpec`: Ephemeral one-spawn overrides for the selected named agent:
+  - `model`: One selector or an ordered selector/fallback array.
+  - `thinkingLevel`: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, or `auto`.
+  - `tools`: Built-in, extension, or MCP tool allowlist.
+  - `spawns`: Child-agent allowlist, or `"*"`; omitted denies nested spawning.
+  - `autoloadSkills`: Parent-discovered skill names to inject before the first prompt.
 - `task`: Complete, self-contained instructions. One-liners or missing acceptance criteria are PROHIBITED.
 {{#if evalToolsEnabled}}- `tools`: Names of eval-defined tools (`@tool` in Python, `tool(fn, {…})` in JS) to expose to this subagent; each runs inside your kernel when the subagent calls it.
 {{/if}}

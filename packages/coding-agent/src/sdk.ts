@@ -570,6 +570,8 @@ export interface CreateAgentSessionOptions {
 	skipPythonPreflight?: boolean;
 	/** Tool names explicitly requested (enables disabled-by-default tools) */
 	toolNames?: string[];
+	/** Keep discovered tools registered but activate only names in {@link toolNames}. */
+	enforceToolAllowlist?: boolean;
 	/** Limit the session to explicitly supplied tool names, without discovered extras. */
 	restrictToolNames?: boolean;
 	/**
@@ -3402,13 +3404,15 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 			: requestedActiveToolNames.filter(name => !defaultInactiveToolNames.has(name));
 		let initialToolNames = [...initialRequestedActiveToolNames];
 
-		// Custom tools and extension-registered tools are always included
-		// unless the effective registry winner is hidden / defaultInactive. Restricted callers own the list.
-		const alwaysInclude: string[] = restrictToolNames
-			? []
-			: [...sdkCustomTools.map(t => t.name), ...registeredTools.map(t => t.definition.name)].filter(
-					name => !defaultInactiveToolNames.has(name),
-				);
+		// Custom and extension tools are ambient by default. Ad-hoc task agents
+		// can retain discovery/MCP wiring while constraining activation to their
+		// explicit tool allowlist.
+		const alwaysInclude: string[] =
+			restrictToolNames || options.enforceToolAllowlist
+				? []
+				: [...sdkCustomTools.map(t => t.name), ...registeredTools.map(t => t.definition.name)].filter(
+						name => !defaultInactiveToolNames.has(name),
+					);
 		for (const name of alwaysInclude) {
 			if (toolRegistry.has(name) && !initialToolNames.includes(name)) {
 				initialToolNames.push(name);
@@ -4021,6 +4025,7 @@ async function createAgentSessionScoped(options: CreateAgentSessionOptions): Pro
 				builtInRegistryToolNames.delete(name);
 				session.setToolBuiltIn(name, false);
 				session.setExtensionMCPTool(name, liveTool);
+				if (options.enforceToolAllowlist && !explicitlyRequested) return;
 				try {
 					if ((registered.definition.defaultInactive || registered.definition.hidden) && !explicitlyRequested) {
 						if (!alreadyEnabled) return;

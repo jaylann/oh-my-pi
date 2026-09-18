@@ -8,7 +8,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import path from "node:path";
 import { $env, prompt, Snowflake } from "@oh-my-pi/pi-utils";
-import { resolveAgentModelSelection } from "../config/model-resolver";
+import { resolveAgentModelSelection, resolveModelOverride } from "../config/model-resolver";
 import { type ServiceTierInheritSettingValue, validateAgentServiceTierOverrides } from "../config/service-tier";
 import type { CustomTool } from "../extensibility/custom-tools/types";
 import type { LocalProtocolOptions } from "../internal-urls";
@@ -22,6 +22,7 @@ import { MAIN_AGENT_ID } from "../registry/agent-registry";
 import type { TaskEffort } from "@oh-my-pi/pi-tui/thinking";
 import type { ToolSession } from "../tools";
 import { isIrcEnabled } from "../tools/hub";
+import { BUILTIN_TOOL_NAMES, HIDDEN_TOOL_NAMES, normalizeToolNames } from "../tools/builtin-names";
 import { buildOutputValidator } from "../tools/output-schema-validator";
 import { trackLateCleanup } from "../utils/late-cleanup";
 import { type DiscoveryResult, discoverAgents, getAgent } from "./discovery";
@@ -46,7 +47,9 @@ import type {
 	StructuredSubagentOutput,
 	StructuredSubagentSchemaMode,
 	StructuredSubagentSchemaSource,
+	TaskAgentSpec,
 } from "@oh-my-pi/pi-tui/tools/task";
+import { CLI_THINKING_LEVELS, parseConfiguredThinkingLevel } from "@oh-my-pi/pi-tui/thinking";
 import type { WorkPoolYieldItem } from "./workpool-yield";
 import { parseIsolationBackend } from "./worktree";
 
@@ -87,6 +90,8 @@ export interface StructuredSubagentRequest {
 	context?: string;
 	agent?: string;
 	model?: string | string[];
+	/** Ephemeral overrides layered onto the selected named agent for this invocation only. */
+	agentSpec?: TaskAgentSpec;
 	/** Presence, rather than truthiness, makes this the highest-priority schema. */
 	outputSchema?: unknown;
 	schemaMode?: StructuredSubagentSchemaMode;
@@ -213,6 +218,155 @@ function createPlanModeAgent(agent: AgentDefinition): AgentDefinition {
 	};
 }
 
+const INLINE_AGENT_TOOL_NAMES: Record<string, true> = Object.fromEntries(
+	[...BUILTIN_TOOL_NAMES, ...HIDDEN_TOOL_NAMES, "exec"].map(name => [name, true]),
+);
+const INLINE_AGENT_SPEC_FIELDS: Record<keyof TaskAgentSpec, true> = {
+	model: true,
+	thinkingLevel: true,
+	tools: true,
+	spawns: true,
+	autoloadSkills: true,
+};
+
+function assertStringArray(value: unknown, field: string): asserts value is string[] {
+	if (!Array.isArray(value) || value.some(entry => typeof entry !== "string")) {
+		throw new StructuredSubagentError("preflight", `Inline agent \`${field}\` must be an array of strings.`);
+	}
+}
+
+function assertInlineAgentSpecShape(spec: TaskAgentSpec): void {
+	if (typeof spec !== "object" || spec === null || Array.isArray(spec)) {
+		throw new StructuredSubagentError("preflight", "Inline `agentSpec` must be an object.");
+	}
+	const record = spec as Record<string, unknown>;
+	const unknownFields = Object.keys(record).filter(field => !Object.hasOwn(INLINE_AGENT_SPEC_FIELDS, field));
+	if (unknownFields.length > 0) {
+		throw new StructuredSubagentError(
+			"preflight",
+			`Unknown inline agent field${unknownFields.length === 1 ? "" : "s"}: ${unknownFields.join(", ")}.`,
+		);
+	}
+	if (record.model !== undefined && typeof record.model !== "string") assertStringArray(record.model, "model");
+	if (record.tools !== undefined) assertStringArray(record.tools, "tools");
+	if (record.autoloadSkills !== undefined) assertStringArray(record.autoloadSkills, "autoloadSkills");
+	if (record.spawns !== undefined && record.spawns !== "*") assertStringArray(record.spawns, "spawns");
+	if (record.thinkingLevel !== undefined && typeof record.thinkingLevel !== "string") {
+		throw new StructuredSubagentError("preflight", "Inline agent `thinkingLevel` must be a string.");
+	}
+}
+
+function normalizedSpecList(values: readonly string[], field: string): string[] {
+	const normalized = values.map(value => value.trim());
+	if (normalized.some(value => value.length === 0)) {
+		throw new StructuredSubagentError("preflight", `Inline agent \`${field}\` entries must be non-empty strings.`);
+	}
+	return [...new Set(normalized)];
+}
+
+function validateInlineAgentSpec(
+	request: StructuredSubagentRequest,
+	spec: TaskAgentSpec,
+	agents: readonly AgentDefinition[],
+): AgentDefinition {
+	assertInlineAgentSpecShape(spec);
+	const base = getAgent(
+		[...agents],
+		request.agent?.trim() || resolveSpawnPolicy(request.session.getSessionSpawns()).defaultAgent,
+	);
+	if (!base) {
+		throw new StructuredSubagentError(
+			"preflight",
+			"Cannot apply an inline agent specification without a named base agent.",
+		);
+	}
+
+	let model: string[] | undefined;
+	if (spec.model !== undefined) {
+		const rawPatterns = Array.isArray(spec.model) ? spec.model : [spec.model];
+		model = normalizedSpecList(rawPatterns, "model");
+		if (model.length === 0) {
+			throw new StructuredSubagentError("preflight", "Inline agent `model` must contain at least one selector.");
+		}
+		const registry = request.session.modelRegistry;
+		if (!registry) {
+			throw new StructuredSubagentError(
+				"preflight",
+				"Inline agent model selectors cannot be validated because this session has no model registry.",
+			);
+		}
+		const unknown = model.filter(
+			pattern => !resolveModelOverride([pattern], registry, request.session.settings).model,
+		);
+		if (unknown.length > 0) {
+			throw new StructuredSubagentError(
+				"preflight",
+				`Unknown inline agent model selector${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}.`,
+			);
+		}
+	}
+
+	let tools: string[] | undefined;
+	if (spec.tools !== undefined) {
+		tools = normalizeToolNames(normalizedSpecList(spec.tools, "tools"));
+		const knownTools = new Set(Object.keys(INLINE_AGENT_TOOL_NAMES));
+		for (const name of request.session.toolRegistry?.keys() ?? []) knownTools.add(name);
+		const unknown = tools.filter(name => !knownTools.has(name));
+		if (unknown.length > 0) {
+			throw new StructuredSubagentError(
+				"preflight",
+				`Unknown inline agent tool${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}. Available tools: ${[...knownTools].sort().join(", ")}.`,
+			);
+		}
+	}
+
+	let autoloadSkills: string[] | undefined;
+	if (spec.autoloadSkills !== undefined) {
+		autoloadSkills = normalizedSpecList(spec.autoloadSkills, "autoloadSkills");
+		const knownSkills = new Set((request.session.skills ?? []).map(skill => skill.name));
+		const unknown = autoloadSkills.filter(name => !knownSkills.has(name));
+		if (unknown.length > 0) {
+			throw new StructuredSubagentError(
+				"preflight",
+				`Unknown inline agent skill${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}. Available skills: ${[...knownSkills].sort().join(", ") || "none"}.`,
+			);
+		}
+	}
+
+	let spawns: string[] | "*" | undefined;
+	if (spec.spawns === "*") {
+		spawns = "*";
+	} else if (spec.spawns !== undefined) {
+		spawns = normalizedSpecList(spec.spawns, "spawns");
+		const knownAgents = new Set(agents.map(agent => agent.name));
+		const unknown = spawns.filter(name => !knownAgents.has(name));
+		if (unknown.length > 0) {
+			throw new StructuredSubagentError(
+				"preflight",
+				`Unknown inline child agent${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}. Available agents: ${[...knownAgents].join(", ") || "none"}.`,
+			);
+		}
+	}
+
+	if (spec.thinkingLevel !== undefined && !CLI_THINKING_LEVELS.includes(spec.thinkingLevel)) {
+		throw new StructuredSubagentError(
+			"preflight",
+			`Unknown inline agent thinking level ${JSON.stringify(spec.thinkingLevel)}. Valid levels: ${CLI_THINKING_LEVELS.join(", ")}.`,
+		);
+	}
+
+	const thinkingLevel =
+		spec.thinkingLevel === undefined ? undefined : parseConfiguredThinkingLevel(spec.thinkingLevel);
+	return {
+		...base,
+		...(model !== undefined ? { model } : {}),
+		...(thinkingLevel !== undefined ? { thinkingLevel } : {}),
+		...(tools !== undefined ? { tools } : {}),
+		spawns,
+		...(autoloadSkills !== undefined ? { autoloadSkills } : {}),
+	};
+}
+
 function assertPlanControlsAllowed(request: StructuredSubagentRequest, planMode: boolean): void {
 	if (!planMode) return;
 	if (request.customTools?.length) {
@@ -288,7 +442,8 @@ export async function resolveEffectiveSubagentPolicy(
 		);
 	}
 
-	const effectiveAgent = planMode ? createPlanModeAgent(agent) : agent;
+	const configuredAgent = request.agentSpec ? validateInlineAgentSpec(request, request.agentSpec, agents) : agent;
+	const effectiveAgent = planMode ? createPlanModeAgent(configuredAgent) : configuredAgent;
 	const schema = resolveSchema(request, effectiveAgent);
 	if (schema.source === "caller" || (schema.source !== "none" && schema.mode === "strict")) {
 		const { error } = buildOutputValidator(schema.schema);
@@ -307,7 +462,7 @@ export async function resolveEffectiveSubagentPolicy(
 		: undefined;
 	const parentActiveModelPattern = request.session.getActiveModelString?.();
 	const modelResolution = {
-		requestModel: request.model,
+		requestModel: request.model ?? request.agentSpec?.model,
 		settingsOverride: agentModelOverrides[agentName],
 		agentModel: effectiveAgent.model,
 		settings: request.session.settings,
@@ -404,7 +559,7 @@ function buildExecutorOptions(
 	id: string,
 ): ExecutorOptions {
 	const { session } = request;
-	const { skills, autoloadSkills } = resolveAutoloadSkills(session, policy.agent);
+	const { skills, autoloadSkills } = resolveAutoloadSkills(session, policy.effectiveAgent);
 	const localProtocolOptions: LocalProtocolOptions = session.localProtocolOptions ?? {
 		getArtifactsDir: session.getArtifactsDir ?? (() => null),
 		getSessionId: session.getSessionId ?? (() => null),
@@ -452,6 +607,7 @@ function buildExecutorOptions(
 		enableIrc: policy.enableIrc,
 		maxRuntimeMs: request.maxRuntimeMs,
 		restrictToolNames,
+		enforceToolAllowlist: request.agentSpec?.tools !== undefined,
 		keepAlive: request.keepAlive,
 		signal: request.signal,
 		eventBus: session.eventBus,

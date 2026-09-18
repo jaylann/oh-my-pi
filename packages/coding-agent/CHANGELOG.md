@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+
+- Added ephemeral per-task agent specifications for one-off model fallbacks, thinking levels, tool and child-agent allowlists, and skill autoloading without creating persistent agent definitions.
+
 ### Fixed
 
 - Fixed `omp auth-broker token` and `omp auth-gateway token` exiting silently without creating a token on Windows when no token file exists yet; token and config reads now use `node:fs` instead of `Bun.file`.
