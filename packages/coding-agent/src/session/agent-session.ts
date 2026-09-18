@@ -8572,8 +8572,8 @@ export class AgentSession {
 	}
 
 	/** Advances through the thinking selectors supported by the active model. */
-	cycleThinkingLevel(): ConfiguredThinkingLevel | undefined {
-		return this.#models.cycleThinkingLevel();
+	cycleThinkingLevel(persist: boolean = false): ConfiguredThinkingLevel | undefined {
+		return this.#models.cycleThinkingLevel(persist);
 	}
 
 	/** Reports whether `/fast` is enabled for the active model family. */

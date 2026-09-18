@@ -2294,7 +2294,7 @@ export class InputController {
 			this.ctx.showStatus("Model/thinking apply to the main session — press ←← to return first");
 			return;
 		}
-		const newLevel = this.ctx.session.cycleThinkingLevel();
+		const newLevel = this.ctx.session.cycleThinkingLevel(true);
 		if (newLevel === undefined) {
 			this.ctx.showStatus("Current model does not support thinking");
 		} else {

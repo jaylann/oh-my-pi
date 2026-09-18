@@ -1,10 +1,10 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import * as path from "node:path";
-import { Agent } from "@oh-my-pi/pi-agent-core";
+import { Agent, ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import { type Api, type AssistantMessage, Effort, type Model } from "@oh-my-pi/pi-ai";
 import { getBundledModel } from "@oh-my-pi/pi-catalog/models";
 import { ModelRegistry } from "@oh-my-pi/pi-coding-agent/config/model-registry";
-import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
+import { resetSettingsForTest, Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { type CreateAgentSessionResult, createAgentSession } from "@oh-my-pi/pi-coding-agent/sdk";
 import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
@@ -47,6 +47,7 @@ describe("AgentSession model persistence", () => {
 			session = undefined;
 		}
 		tempDir.removeSync();
+		resetSettingsForTest();
 	});
 
 	function getAnthropicModelOrThrow(id: string): Model<Api> {
@@ -97,6 +98,7 @@ describe("AgentSession model persistence", () => {
 		selectInitialModel?: (availableModels: Model<Api>[]) => Model<Api>;
 		modelRoles?: Record<string, string>;
 		persist?: boolean;
+		settings?: Settings;
 	}): Promise<{ modelRegistry: ModelRegistry; settings: Settings; session: AgentSession }> {
 		const modelRegistry = sharedModelRegistry;
 		const model =
@@ -113,7 +115,7 @@ describe("AgentSession model persistence", () => {
 			},
 		});
 
-		sessionSettings = Settings.isolated();
+		sessionSettings = options?.settings ?? Settings.isolated();
 		const modelRoles = options?.modelRoles;
 		if (modelRoles) {
 			for (const role in modelRoles) {
@@ -196,6 +198,33 @@ describe("AgentSession model persistence", () => {
 
 		expect(created.session.model?.id).toBe(nextModel.id);
 		expect(created.settings.getModelRole("default")).toBe(modelValue(nextModel));
+	});
+
+	it("persists user-cycled thinking selectors across settings reloads", async () => {
+		const agentDir = path.join(tempDir.path(), "agent");
+		const projectDir = path.join(tempDir.path(), "project");
+		const cases = [
+			{ previous: Effort.Low, expected: Effort.Medium },
+			{ previous: Effort.XHigh, expected: ThinkingLevel.Off },
+			{ previous: ThinkingLevel.Off, expected: AUTO_THINKING },
+		] as const;
+
+		for (const testCase of cases) {
+			resetSettingsForTest();
+			const persisted = await Settings.init({ cwd: projectDir, agentDir });
+			const created = await createSession({ settings: persisted });
+			created.session.setThinkingLevel(testCase.previous);
+
+			expect(created.session.cycleThinkingLevel(true)).toBe(testCase.expected);
+			expect(persisted.get("defaultThinkingLevel")).toBe(testCase.expected);
+			await persisted.flush();
+			await created.session.dispose();
+			session = undefined;
+
+			resetSettingsForTest();
+			const reloaded = await Settings.init({ cwd: projectDir, agentDir });
+			expect(reloaded.get("defaultThinkingLevel")).toBe(testCase.expected);
+		}
 	});
 
 	it("switches the active model even when the live context is over the target window", async () => {

@@ -1,4 +1,5 @@
 import { ADVISOR_DEFAULT_BUDGET_PER_UPDATE } from "../advisor/emission-guard";
+import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import { THINKING_EFFORTS } from "@oh-my-pi/pi-catalog/effort";
 import { DEFAULT_SHARE_URL, DEFAULT_STREAM_URL } from "@oh-my-pi/pi-wire";
 import { TREE_FILTER_MODES } from "@oh-my-pi/pi-tui/overlays/tree-selector";
@@ -1285,7 +1286,7 @@ export const SETTINGS_SCHEMA = {
 	// Reasoning and prompts
 	defaultThinkingLevel: {
 		type: "enum",
-		values: [...THINKING_EFFORTS, AUTO_THINKING],
+		values: [ThinkingLevel.Off, ...THINKING_EFFORTS, AUTO_THINKING],
 		default: "high",
 		ui: {
 			tab: "model",
@@ -1294,6 +1295,7 @@ export const SETTINGS_SCHEMA = {
 			description: "Reasoning depth for thinking-capable models",
 			options: [
 				getConfiguredThinkingLevelMetadata(AUTO_THINKING),
+				getConfiguredThinkingLevelMetadata(ThinkingLevel.Off),
 				...THINKING_EFFORTS.map(getThinkingLevelMetadata),
 			],
 		},
