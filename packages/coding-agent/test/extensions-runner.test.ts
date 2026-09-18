@@ -162,6 +162,83 @@ describe("ExtensionRunner", () => {
 		expect(runner.createContext().mode).toBe("tui");
 	});
 
+	it("exposes native plan transitions only to interactive extension handlers", async () => {
+		const extensionPath = path.join(extensionsDir, "plan-toggle.ts");
+		fs.writeFileSync(
+			extensionPath,
+			`
+				export default function(pi) {
+					pi.on("session_start", async (_event, ctx) => {
+						if (!ctx.togglePlanMode) {
+							pi.appendEntry("observed-mode", { mode: "unsupported" });
+							return;
+						}
+						await ctx.togglePlanMode();
+						const mode = ctx.sessionManager
+							.getBranch()
+							.findLast(entry => entry.type === "mode_change")?.mode ?? "none";
+						pi.appendEntry("observed-mode", { mode });
+					});
+				}
+			`,
+		);
+		const result = await loadTestExtensions();
+		const runner = new ExtensionRunner(
+			result.extensions,
+			result.runtime,
+			tempDir.path(),
+			sessionManager,
+			modelRegistry,
+		);
+		const actions = {
+			sendMessage: () => {},
+			sendUserMessage: () => {},
+			appendEntry: (customType: string, data: unknown) => sessionManager.appendCustomEntry(customType, data),
+			setLabel: () => {},
+			getActiveTools: () => [],
+			getAllTools: () => [],
+			setActiveTools: async () => {},
+			getCommands: () => [],
+			setModel: async () => false,
+			getThinkingLevel: () => undefined,
+			setThinkingLevel: () => {},
+			getSessionName: () => undefined,
+			setSessionName: async () => {},
+		};
+		const contextActions = {
+			getModel: () => undefined,
+			isIdle: () => true,
+			abort: () => {},
+			hasPendingMessages: () => false,
+			shutdown: () => {},
+			getContextUsage: () => undefined,
+			compact: async () => {},
+			getSystemPrompt: () => [],
+			togglePlanMode: async () => {
+				sessionManager.appendModeChange("plan", { planFilePath: "local://PLAN.md" });
+			},
+		};
+
+		runner.initialize(actions, contextActions, undefined, undefined, "tui");
+		await runner.emit({ type: "session_start" });
+
+		const observed = sessionManager
+			.getBranch()
+			.findLast(entry => entry.type === "custom" && entry.customType === "observed-mode");
+		expect(observed).toMatchObject({ type: "custom", data: { mode: "plan" } });
+
+		const headlessRunner = new ExtensionRunner(
+			[],
+			new ExtensionRuntime(),
+			tempDir.path(),
+			sessionManager,
+			modelRegistry,
+		);
+		const { togglePlanMode: _togglePlanMode, ...headlessContextActions } = contextActions;
+		headlessRunner.initialize(actions, headlessContextActions);
+		expect(headlessRunner.createContext().togglePlanMode).toBeUndefined();
+	});
+
 	it("uses required context actions when command actions are unavailable", async () => {
 		const result = await loadTestExtensions();
 		const runner = new ExtensionRunner(

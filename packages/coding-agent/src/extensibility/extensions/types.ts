@@ -436,6 +436,8 @@ export interface ExtensionContext {
 	getAsyncJobSnapshot(): AsyncJobSnapshot | null;
 	/** Compact the session context (interactive mode shows UI). */
 	compact(instructionsOrOptions?: string | CompactOptions): Promise<void>;
+	/** Toggle the native Plan → paused → off lifecycle. Available only in interactive TUI contexts. */
+	togglePlanMode?(): Promise<void>;
 	/** Whether UI is available (false in print/RPC mode) */
 	hasUI: boolean;
 	/** Current working directory */
@@ -1693,6 +1695,8 @@ export interface ExtensionContextActions {
 	getContextUsage: () => ContextUsage | undefined;
 	compact: (instructionsOrOptions?: string | CompactOptions) => Promise<void>;
 	getSystemPrompt: () => string[];
+	/** Invoke the interactive TUI's native Plan → paused → off transition. */
+	togglePlanMode?: () => Promise<void>;
 }
 
 /** Actions for ExtensionCommandContext (ctx.* in command handlers). */
